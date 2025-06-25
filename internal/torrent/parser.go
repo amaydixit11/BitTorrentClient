@@ -135,7 +135,7 @@ func parseTorrentFromMap(torrentMap map[string]interface{}) (*Torrent, error) {
 	// Parse info dictionary
 	infoInterface, ok := torrentMap["info"]
 	if !ok {
-		return nil, fmt.Errorf("missing info dictionary")
+		return nil, fmt.Errorf("missing in	fo dictionary")
 	}
 
 	infoMap, ok := infoInterface.(map[string]interface{})
