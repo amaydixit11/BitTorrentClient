@@ -120,16 +120,13 @@ func (p *Peer) HandleMessage(msg *Message) error {
 		copy(p.Bitfield, msg.Payload)
 
 	case MsgRequest:
-		// Handle incoming request (for serving files)
-		// This will be implemented in later phases
+		// TODO: Handle incoming request (for serving files)
 
 	case MsgPiece:
-		// Handle incoming piece data
-		// This will be implemented in phase 4
+		// TODO: Handle incoming piece data
 
 	case MsgCancel:
-		// Handle cancel request
-		// This will be implemented in later phases if needed
+		// TODO: Handle cancel request
 
 	default:
 		return fmt.Errorf("unknown message ID: %d", msg.ID)
