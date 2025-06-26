@@ -4,9 +4,11 @@ import (
 	"bittorrentclient/internal/bencode"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // urlEncodeBytes properly URL encodes binary data for tracker requests
@@ -37,107 +39,133 @@ func (tc *TrackerClient) buildTrackerURL(announceURL string, req *TrackerRequest
 		return "", fmt.Errorf("invalid announce URL: %v", err)
 	}
 
-	params := url.Values{}
+	// Build query string manually to avoid double encoding
+	var parts []string
 
 	// Required parameters
-	params.Set("info_hash", urlEncodeBytes(req.InfoHash))
-	params.Set("peer_id", urlEncodeBytes(req.PeerID))
-	params.Set("port", strconv.Itoa(req.Port))
-	params.Set("uploaded", strconv.FormatInt(req.Uploaded, 10))
-	params.Set("downloaded", strconv.FormatInt(req.Downloaded, 10))
-	params.Set("left", strconv.FormatInt(req.Left, 10))
+	parts = append(parts, "info_hash="+urlEncodeBytes(req.InfoHash))
+	parts = append(parts, "peer_id="+urlEncodeBytes(req.PeerID))
+	parts = append(parts, "port="+strconv.Itoa(req.Port))
+	parts = append(parts, "uploaded="+strconv.FormatInt(req.Uploaded, 10))
+	parts = append(parts, "downloaded="+strconv.FormatInt(req.Downloaded, 10))
+	parts = append(parts, "left="+strconv.FormatInt(req.Left, 10))
 
 	// Optional parameters
 	if req.Compact {
-		params.Set("compact", "1")
+		parts = append(parts, "compact=1")
 	}
 
 	if req.NoPeerID {
-		params.Set("no_peer_id", "1")
+		parts = append(parts, "no_peer_id=1")
 	}
 
 	if req.Event != "" {
-		params.Set("event", req.Event)
+		parts = append(parts, "event="+url.QueryEscape(req.Event))
 	}
 
 	if req.IP != "" {
-		params.Set("ip", req.IP)
+		parts = append(parts, "ip="+url.QueryEscape(req.IP))
 	}
 
 	if req.NumWant > 0 {
-		params.Set("numwant", strconv.Itoa(req.NumWant))
+		parts = append(parts, "numwant="+strconv.Itoa(req.NumWant))
 	}
 
 	if req.Key != "" {
-		params.Set("key", req.Key)
+		parts = append(parts, "key="+url.QueryEscape(req.Key))
 	}
 
 	if req.TrackerID != "" {
-		params.Set("trackerid", req.TrackerID)
+		parts = append(parts, "trackerid="+url.QueryEscape(req.TrackerID))
 	}
 
-	// Manually construct URL to avoid double-encoding
-	baseURL := u.String()
+	queryString := strings.Join(parts, "&")
+
 	if u.RawQuery != "" {
-		baseURL += "&" + params.Encode()
-	} else {
-		baseURL += "?" + params.Encode()
+		return u.String() + "&" + queryString, nil
 	}
-
-	return baseURL, nil
+	return u.String() + "?" + queryString, nil
 }
 
 // Announce sends an announce request to the tracker
 func (tc *TrackerClient) Announce(announceURL string, req *TrackerRequest) (*TrackerResponse, error) {
-	// Set default peer ID if not provided
+	log.Println("Starting Announce")
+
 	if req.PeerID == nil {
+		log.Println("PeerID not provided in request, using default")
 		req.PeerID = tc.peerID
 	}
 
-	// Set default port if not provided
 	if req.Port == 0 {
+		log.Println("Port not provided in request, using default")
 		req.Port = tc.port
 	}
 
-	// Set default numwant if not provided
 	if req.NumWant == 0 {
+		log.Println("NumWant not provided in request, defaulting to 50")
 		req.NumWant = 50
 	}
 
-	// Build the request URL
+	log.Printf("TrackerRequest before building URL: %+v", req)
+
 	reqURL, err := tc.buildTrackerURL(announceURL, req)
 	if err != nil {
+		log.Printf("Error building tracker URL: %v", err)
 		return nil, fmt.Errorf("failed to build tracker URL: %v", err)
 	}
 
-	// Make the HTTP request
+	log.Printf("Built tracker URL: %s", reqURL)
+
 	resp, err := tc.httpClient.Get(reqURL)
 	if err != nil {
+		log.Printf("HTTP GET failed: %v", err)
 		return nil, fmt.Errorf("tracker request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
+	log.Printf("Tracker response status: %s", resp.Status)
+
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Unexpected tracker status code: %d", resp.StatusCode)
 		return nil, fmt.Errorf("tracker returned status %d", resp.StatusCode)
 	}
 
-	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read tracker response: %v", err)
 		return nil, fmt.Errorf("failed to read tracker response: %v", err)
 	}
 
-	// Parse bencode response
+	log.Printf("Raw response body (first 200 bytes): %s", string(body[:min(200, len(body))]))
+
 	decoded, err := bencode.Decode(body)
 	if err != nil {
+		log.Printf("Bencode decode failed: %v", err)
 		return nil, fmt.Errorf("failed to decode tracker response: %v", err)
 	}
 
 	dict, ok := decoded.(map[string]interface{})
 	if !ok {
+		log.Println("Decoded response is not a dictionary")
 		return nil, fmt.Errorf("tracker response is not a dictionary")
 	}
 
-	// Parse the response
-	return tc.parseTrackerResponse(dict)
+	log.Printf("Decoded tracker response: %+v", dict)
+
+	respParsed, err := tc.parseTrackerResponse(dict)
+	if err != nil {
+		log.Printf("Failed to parse tracker response: %v", err)
+		return nil, err
+	}
+
+	log.Println("Announce completed successfully")
+	return respParsed, nil
+}
+
+// min helper for slicing
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
