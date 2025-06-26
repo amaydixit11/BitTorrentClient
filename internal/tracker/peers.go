@@ -3,7 +3,6 @@ package tracker
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"net"
 )
 
@@ -92,13 +91,6 @@ func (tc *TrackerClient) parseDictPeers(data []interface{}) ([]Peer, error) {
 // GetPeers is a convenience method for getting peers for a torrent
 
 func (tc *TrackerClient) GetPeers(announceURL string, infoHash []byte, left int64) ([]Peer, error) {
-	log.Println("Starting GetPeers")
-
-	log.Printf("Announce URL: %s", announceURL)
-	log.Printf("InfoHash (len=%d): %x", len(infoHash), infoHash)
-	log.Printf("Left: %d", left)
-	log.Printf("PeerID: %x", tc.peerID)
-	log.Printf("Port: %d", tc.port)
 
 	req := &TrackerRequest{
 		InfoHash:   infoHash,
@@ -112,24 +104,14 @@ func (tc *TrackerClient) GetPeers(announceURL string, infoHash []byte, left int6
 		NumWant:    50,
 	}
 
-	log.Printf("TrackerRequest: %+v", req)
-
 	resp, err := tc.Announce(announceURL, req)
 	if err != nil {
-		log.Printf("Error from Announce: %v", err)
 		return nil, err
 	}
 
 	if resp.FailureReason != "" {
-		log.Printf("Tracker returned failure: %s", resp.FailureReason)
 		return nil, fmt.Errorf("tracker error: %s", resp.FailureReason)
 	}
 
-	log.Printf("Received %d peers from tracker", len(resp.Peers))
-	for i, peer := range resp.Peers {
-		log.Printf("Peer %d: %+v", i+1, peer)
-	}
-
-	log.Println("GetPeers completed successfully")
 	return resp.Peers, nil
 }

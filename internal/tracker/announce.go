@@ -4,7 +4,6 @@ import (
 	"bittorrentclient/internal/bencode"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -89,76 +88,54 @@ func (tc *TrackerClient) buildTrackerURL(announceURL string, req *TrackerRequest
 
 // Announce sends an announce request to the tracker
 func (tc *TrackerClient) Announce(announceURL string, req *TrackerRequest) (*TrackerResponse, error) {
-	log.Println("Starting Announce")
 
 	if req.PeerID == nil {
-		log.Println("PeerID not provided in request, using default")
 		req.PeerID = tc.peerID
 	}
 
 	if req.Port == 0 {
-		log.Println("Port not provided in request, using default")
 		req.Port = tc.port
 	}
 
 	if req.NumWant == 0 {
-		log.Println("NumWant not provided in request, defaulting to 50")
 		req.NumWant = 50
 	}
 
-	log.Printf("TrackerRequest before building URL: %+v", req)
-
 	reqURL, err := tc.buildTrackerURL(announceURL, req)
 	if err != nil {
-		log.Printf("Error building tracker URL: %v", err)
 		return nil, fmt.Errorf("failed to build tracker URL: %v", err)
 	}
 
-	log.Printf("Built tracker URL: %s", reqURL)
-
 	resp, err := tc.httpClient.Get(reqURL)
 	if err != nil {
-		log.Printf("HTTP GET failed: %v", err)
 		return nil, fmt.Errorf("tracker request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	log.Printf("Tracker response status: %s", resp.Status)
-
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Unexpected tracker status code: %d", resp.StatusCode)
 		return nil, fmt.Errorf("tracker returned status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read tracker response: %v", err)
 		return nil, fmt.Errorf("failed to read tracker response: %v", err)
 	}
 
-	log.Printf("Raw response body (first 200 bytes): %s", string(body[:min(200, len(body))]))
-
 	decoded, err := bencode.Decode(body)
 	if err != nil {
-		log.Printf("Bencode decode failed: %v", err)
 		return nil, fmt.Errorf("failed to decode tracker response: %v", err)
 	}
 
 	dict, ok := decoded.(map[string]interface{})
 	if !ok {
-		log.Println("Decoded response is not a dictionary")
 		return nil, fmt.Errorf("tracker response is not a dictionary")
 	}
 
-	log.Printf("Decoded tracker response: %+v", dict)
-
 	respParsed, err := tc.parseTrackerResponse(dict)
 	if err != nil {
-		log.Printf("Failed to parse tracker response: %v", err)
 		return nil, err
 	}
 
-	log.Println("Announce completed successfully")
 	return respParsed, nil
 }
 
