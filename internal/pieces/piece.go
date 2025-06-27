@@ -1,4 +1,3 @@
-// internal/piece/piece.go
 package piece
 
 import (

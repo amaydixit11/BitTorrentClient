@@ -1,4 +1,3 @@
-// internal/piece/selector.go
 package piece
 
 import (
