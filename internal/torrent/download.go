@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"bittorrentclient/internal/file"
 	"bittorrentclient/internal/peer"
 	piece "bittorrentclient/internal/pieces"
 )
@@ -21,30 +22,41 @@ type Downloader struct {
 	downloadDone chan struct{}
 }
 
-func GetPieceManager(t *Torrent) *piece.Manager {
+func GetPieceManager(t *Torrent, outputDir string) *piece.Manager {
 	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
 	for i := 0; i < len(pieceHashes); i++ {
 		pieceHashes[i] = t.Info.Pieces[i]
 	}
-	return piece.NewManager(pieceHashes, t.Info.PieceLength, t.Info.GetTotalLength())
+
+	// Create file info from torrent
+	fileInfos := createFileInfoFromTorrent(t)
+
+	return piece.NewManager(pieceHashes, t.Info.PieceLength, t.Info.GetTotalLength(), fileInfos, outputDir)
 }
 
 // NewDownloader creates a new downloader
-func NewDownloader(t *Torrent) *Downloader {
-	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
-	for i := 0; i < len(pieceHashes); i++ {
-		pieceHashes[i] = t.Info.Pieces[i]
-	}
-
+func NewDownloader(t *Torrent, outputDir string) *Downloader {
 	return &Downloader{
 		torrent:      t,
-		pieceManager: piece.NewManager(pieceHashes, t.Info.PieceLength, t.Info.GetTotalLength()),
+		pieceManager: GetPieceManager(t, outputDir),
 		requestMgr:   piece.NewRequestManager(piece.MaxRequestsPerPeer),
 		selector:     piece.NewPieceSelector(),
 		connections:  make(map[string]*peer.Connection),
 		done:         make(chan struct{}),
 		downloadDone: make(chan struct{}),
 	}
+}
+
+// Start starts the download process
+func (d *Downloader) Start() {
+	// Initialize file system before starting download
+	err := d.pieceManager.Initialize()
+	if err != nil {
+		fmt.Printf("Failed to initialize file system: %v\n", err)
+		return
+	}
+
+	go d.downloadLoop()
 }
 
 // AddPeer adds a peer connection to the downloader
@@ -72,11 +84,6 @@ func (d *Downloader) RemovePeer(peerID [20]byte) {
 	}
 }
 
-// Start starts the download process
-func (d *Downloader) Start() {
-	go d.downloadLoop()
-}
-
 // Stop stops the download process
 func (d *Downloader) Stop() {
 	close(d.done)
@@ -87,6 +94,11 @@ func (d *Downloader) Stop() {
 		conn.Stop()
 	}
 	d.mu.Unlock()
+
+	// Close file writer
+	if err := d.pieceManager.Close(); err != nil {
+		fmt.Printf("Error closing file writer: %v\n", err)
+	}
 }
 
 // IsComplete returns true if download is complete
@@ -128,10 +140,11 @@ func (d *Downloader) downloadLoop() {
 			// Try to make new requests
 			d.makeRequests()
 
-			// Print progress
-			fmt.Printf("Progress: %.1f%% - Speed: %.2f KB/s\n",
+			// Print progress - Update this section
+			fmt.Printf("Progress: %.1f%% - Speed: %.2f KB/s - Files: %s\n",
 				d.pieceManager.GetProgress(),
-				d.pieceManager.GetDownloadSpeed()/1024)
+				d.pieceManager.GetDownloadSpeed()/1024,
+				d.getFileProgressSummary())
 		}
 	}
 }
@@ -259,4 +272,49 @@ func (d *Downloader) handleTimeouts() {
 
 		// TODO: Could re-request from different peer
 	}
+}
+
+// createFileInfoFromTorrent converts torrent info to file.FileInfo
+func createFileInfoFromTorrent(t *Torrent) []file.FileInfo {
+	if len(t.Info.Files) == 0 {
+		// Single file torrent
+		return []file.FileInfo{
+			{
+				Path:   t.Info.Name,
+				Length: *t.Info.Length,
+				Offset: 0,
+			},
+		}
+	}
+
+	// Multi-file torrent
+	var files []file.FileInfo
+	var offset int64
+
+	for _, f := range t.Info.Files {
+		path := t.Info.Name
+		for _, p := range f.Path {
+			path += "/" + p
+		}
+
+		files = append(files, file.FileInfo{
+			Path:   path,
+			Length: f.Length,
+			Offset: offset,
+		})
+
+		offset += f.Length
+	}
+
+	return files
+}
+
+// getFileProgressSummary returns a summary of file progress
+func (d *Downloader) getFileProgressSummary() string {
+	progress := d.pieceManager.GetFileProgress()
+	if progress == nil {
+		return "N/A"
+	}
+
+	return progress.GetProgressSummary()
 }
