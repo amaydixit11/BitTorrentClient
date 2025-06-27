@@ -54,3 +54,20 @@ func (i *Info) Validate() error {
 
 	return nil
 }
+
+func (i *Info) GetTotalLength() int64 {
+	if i.IsSingleFile() {
+		return *i.Length
+	}
+
+	var total int64
+	for _, file := range i.Files {
+		total += file.Length
+	}
+	return total
+}
+
+// NewDownloader creates a new downloader for this torrent
+func (t *Torrent) NewDownloader() *Downloader {
+	return NewDownloader(t)
+}
