@@ -6,7 +6,6 @@ import (
 	"os"
 )
 
-// In parser.go
 func Open(filename string) (*Torrent, error) {
 	Data, err := os.ReadFile(filename)
 	if err != nil {
