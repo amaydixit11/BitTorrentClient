@@ -119,24 +119,6 @@ func NewBitfieldMessage(bitfield []byte) *Message {
 	return NewMessage(MsgBitfield, bitfield)
 }
 
-// NewRequestMessage creates a request message
-func NewRequestMessage(index, begin, length uint32) *Message {
-	payload := make([]byte, 12)
-	binary.BigEndian.PutUint32(payload[0:4], index)
-	binary.BigEndian.PutUint32(payload[4:8], begin)
-	binary.BigEndian.PutUint32(payload[8:12], length)
-	return NewMessage(MsgRequest, payload)
-}
-
-// NewPieceMessage creates a piece message
-func NewPieceMessage(index, begin uint32, block []byte) *Message {
-	payload := make([]byte, 8+len(block))
-	binary.BigEndian.PutUint32(payload[0:4], index)
-	binary.BigEndian.PutUint32(payload[4:8], begin)
-	copy(payload[8:], block)
-	return NewMessage(MsgPiece, payload)
-}
-
 // NewCancelMessage creates a cancel message
 func NewCancelMessage(index, begin, length uint32) *Message {
 	payload := make([]byte, 12)
@@ -146,18 +128,22 @@ func NewCancelMessage(index, begin, length uint32) *Message {
 	return NewMessage(MsgCancel, payload)
 }
 
-// ParseHaveMessage parses a have message payload
-func ParseHaveMessage(payload []byte) (uint32, error) {
-	if len(payload) != 4 {
-		return 0, fmt.Errorf("invalid have message payload length: %d", len(payload))
+func NewRequestMessage(index, begin, length uint32) *Message {
+	payload := make([]byte, 12)
+	binary.BigEndian.PutUint32(payload[0:4], index)
+	binary.BigEndian.PutUint32(payload[4:8], begin)
+	binary.BigEndian.PutUint32(payload[8:12], length)
+
+	return &Message{
+		ID:      MsgRequest,
+		Payload: payload,
 	}
-	return binary.BigEndian.Uint32(payload), nil
 }
 
 // ParseRequestMessage parses a request message payload
 func ParseRequestMessage(payload []byte) (index, begin, length uint32, err error) {
 	if len(payload) != 12 {
-		return 0, 0, 0, fmt.Errorf("invalid request message payload length: %d", len(payload))
+		return 0, 0, 0, fmt.Errorf("invalid request payload length: %d", len(payload))
 	}
 
 	index = binary.BigEndian.Uint32(payload[0:4])
@@ -168,14 +154,35 @@ func ParseRequestMessage(payload []byte) (index, begin, length uint32, err error
 }
 
 // ParsePieceMessage parses a piece message payload
-func ParsePieceMessage(payload []byte) (index, begin uint32, block []byte, err error) {
+func ParsePieceMessage(payload []byte) (index, begin uint32, data []byte, err error) {
 	if len(payload) < 8 {
-		return 0, 0, nil, fmt.Errorf("invalid piece message payload length: %d", len(payload))
+		return 0, 0, nil, fmt.Errorf("invalid piece payload length: %d", len(payload))
 	}
 
 	index = binary.BigEndian.Uint32(payload[0:4])
 	begin = binary.BigEndian.Uint32(payload[4:8])
-	block = payload[8:]
+	data = payload[8:]
 
-	return index, begin, block, nil
+	return index, begin, data, nil
+}
+
+// NewPieceMessage creates a piece message
+func NewPieceMessage(index, begin uint32, data []byte) *Message {
+	payload := make([]byte, 8+len(data))
+	binary.BigEndian.PutUint32(payload[0:4], index)
+	binary.BigEndian.PutUint32(payload[4:8], begin)
+	copy(payload[8:], data)
+
+	return &Message{
+		ID:      MsgPiece,
+		Payload: payload,
+	}
+}
+
+// ParseHaveMessage parses a have message payload
+func ParseHaveMessage(payload []byte) (uint32, error) {
+	if len(payload) != 4 {
+		return 0, fmt.Errorf("invalid have payload length: %d", len(payload))
+	}
+	return binary.BigEndian.Uint32(payload), nil
 }

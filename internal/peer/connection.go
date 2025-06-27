@@ -121,16 +121,227 @@ func (p *Peer) HandleMessage(msg *Message) error {
 
 	case MsgRequest:
 		// TODO: Handle incoming request (for serving files)
+		// This will be implemented in later phases
 
 	case MsgPiece:
-		// TODO: Handle incoming piece data
+		// Handle incoming piece data
+		// This will be implemented in phase 4
 
 	case MsgCancel:
-		// TODO: Handle cancel request
+		// Handle cancel request
+		// This will be implemented in later phases if needed
 
 	default:
 		return fmt.Errorf("unknown message ID: %d", msg.ID)
 	}
 
 	return nil
+}
+
+// Connection represents a connection to a peer with download capabilities
+type Connection struct {
+	*Peer
+	requestQueue chan *RequestItem
+	pieceQueue   chan *PieceData
+	done         chan struct{}
+}
+
+// RequestItem represents a piece request
+type RequestItem struct {
+	PieceIndex int64
+	Begin      int64
+	Length     int64
+}
+
+// PieceData represents received piece data
+type PieceData struct {
+	PieceIndex int64
+	Begin      int64
+	Data       []byte
+}
+
+// NewConnection creates a new peer connection
+func NewConnection(conn net.Conn, infoHash [20]byte) *Connection {
+	return &Connection{
+		Peer:         NewPeer(conn, infoHash),
+		requestQueue: make(chan *RequestItem, 100),
+		pieceQueue:   make(chan *PieceData, 100),
+		done:         make(chan struct{}),
+	}
+}
+
+// Start starts the connection message loop
+func (c *Connection) Start() {
+	go c.messageLoop()
+}
+
+// Stop stops the connection
+func (c *Connection) Stop() {
+	close(c.done)
+	c.Close()
+}
+
+// RequestPiece queues a piece request
+func (c *Connection) RequestPiece(pieceIndex, begin int64, length int64) error {
+	if c.Choked {
+		return fmt.Errorf("peer is choking us")
+	}
+
+	select {
+	case c.requestQueue <- &RequestItem{
+		PieceIndex: pieceIndex,
+		Begin:      begin,
+		Length:     length,
+	}:
+		return nil
+	case <-c.done:
+		return fmt.Errorf("connection closed")
+	default:
+		return fmt.Errorf("request queue full")
+	}
+}
+
+// GetPieceData returns a channel for receiving piece data
+func (c *Connection) GetPieceData() <-chan *PieceData {
+	return c.pieceQueue
+}
+
+// messageLoop handles incoming and outgoing messages
+func (c *Connection) messageLoop() {
+	defer c.Stop()
+
+	// Set up ticker for keep-alive messages
+	keepAliveTicker := time.NewTicker(2 * time.Minute)
+	defer keepAliveTicker.Stop()
+
+	for {
+		select {
+		case <-c.done:
+			return
+
+		case req := <-c.requestQueue:
+			// Send request message
+			err := c.SendMessage(NewRequestMessage(
+				uint32(req.PieceIndex),
+				uint32(req.Begin),
+				uint32(req.Length),
+			))
+			if err != nil {
+				fmt.Printf("Failed to send request: %v\n", err)
+				return
+			}
+
+		case <-keepAliveTicker.C:
+			// Send keep-alive
+			err := c.SendKeepAlive()
+			if err != nil {
+				fmt.Printf("Failed to send keep-alive: %v\n", err)
+				return
+			}
+
+		default:
+			// Read incoming messages
+			c.Conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			msg, err := c.ReadMessage()
+			if err != nil {
+				// Check if it's a timeout
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				fmt.Printf("Failed to read message: %v\n", err)
+				return
+			}
+
+			// Handle message
+			err = c.handleMessage(msg)
+			if err != nil {
+				fmt.Printf("Failed to handle message: %v\n", err)
+				return
+			}
+		}
+	}
+}
+
+// handleMessage processes incoming messages
+func (c *Connection) handleMessage(msg *Message) error {
+	if msg == nil {
+		// Keep-alive message
+		return nil
+	}
+
+	switch msg.ID {
+	case MsgChoke:
+		c.Choked = true
+		fmt.Printf("Peer %x choked us\n", c.ID[:8])
+
+	case MsgUnchoke:
+		c.Choked = false
+		fmt.Printf("Peer %x unchoked us\n", c.ID[:8])
+
+	case MsgInterested:
+		c.Interested = true
+
+	case MsgNotInterested:
+		c.Interested = false
+
+	case MsgHave:
+		pieceIndex, err := ParseHaveMessage(msg.Payload)
+		if err != nil {
+			return fmt.Errorf("invalid have message: %w", err)
+		}
+		c.SetPiece(int(pieceIndex))
+
+	case MsgBitfield:
+		// Initialize or update bitfield
+		c.Bitfield = make([]byte, len(msg.Payload))
+		copy(c.Bitfield, msg.Payload)
+
+	case MsgPiece:
+		// Handle incoming piece data
+		index, begin, data, err := ParsePieceMessage(msg.Payload)
+		if err != nil {
+			return fmt.Errorf("invalid piece message: %w", err)
+		}
+
+		// Send piece data to piece queue
+		select {
+		case c.pieceQueue <- &PieceData{
+			PieceIndex: int64(index),
+			Begin:      int64(begin),
+			Data:       data,
+		}:
+		case <-c.done:
+			return fmt.Errorf("connection closed")
+		default:
+			// Queue full, drop the data (shouldn't happen with proper flow control)
+			fmt.Printf("Warning: piece queue full, dropping data\n")
+		}
+
+	case MsgRequest:
+		// TODO: Handle incoming request (for serving files)
+		// This will be implemented in later phases
+
+	case MsgCancel:
+		// TODO: Handle cancel request
+		// This will be implemented in later phases if needed
+
+	default:
+		return fmt.Errorf("unknown message ID: %d", msg.ID)
+	}
+
+	return nil
+}
+
+// IsUseful returns true if this peer has pieces we need
+func (c *Connection) IsUseful(completedPieces map[int]bool, totalPieces int) bool {
+	if c.Bitfield == nil {
+		return false
+	}
+
+	for i := 0; i < totalPieces; i++ {
+		if !completedPieces[i] && c.HasPiece(i) {
+			return true
+		}
+	}
+	return false
 }

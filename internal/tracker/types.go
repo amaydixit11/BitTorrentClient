@@ -13,6 +13,10 @@ type TrackerClient struct {
 	port       int
 }
 
+func (tc *TrackerClient) GetPeerID() []byte {
+	return tc.peerID
+}
+
 // TrackerRequest represents the parameters sent to the tracker
 type TrackerRequest struct {
 	InfoHash   []byte
