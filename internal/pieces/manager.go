@@ -1,4 +1,3 @@
-// internal/piece/manager.go
 package piece
 
 import (

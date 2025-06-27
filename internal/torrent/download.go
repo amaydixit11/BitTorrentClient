@@ -1,4 +1,3 @@
-// internal/torrent/download.go - NEW FILE
 package torrent
 
 import (
