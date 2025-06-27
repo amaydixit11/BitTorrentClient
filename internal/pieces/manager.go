@@ -1,6 +1,7 @@
 package piece
 
 import (
+	"bittorrentclient/internal/file"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -18,6 +19,11 @@ type Manager struct {
 	pendingPieces  map[int]*Piece      // Pieces currently being downloaded
 	completePieces map[int]bool        // Completed pieces
 	requests       map[string]*Request // Outstanding requests (key: "pieceIndex:begin")
+
+	// File system integration - Add these fields
+	fileWriter *file.Writer
+	fileMapper *file.Mapper
+	resumeData map[int]bool // For resume capability
 
 	// Statistics
 	downloadedBytes int64
@@ -37,7 +43,13 @@ func (m *Manager) GetPieces() []*Piece {
 }
 
 // NewManager creates a new piece manager
-func NewManager(pieces [][20]byte, pieceLength int64, totalLength int64) *Manager {
+func NewManager(pieces [][20]byte, pieceLength int64, totalLength int64, fileInfos []file.FileInfo, outputDir string) *Manager {
+	// Create file mapper
+	mapper := file.NewMapper(fileInfos, pieceLength, totalLength)
+
+	// Create file writer
+	writer := file.NewWriter(mapper, outputDir)
+
 	manager := &Manager{
 		totalPieces:    len(pieces),
 		pieceLength:    pieceLength,
@@ -46,24 +58,45 @@ func NewManager(pieces [][20]byte, pieceLength int64, totalLength int64) *Manage
 		pendingPieces:  make(map[int]*Piece),
 		completePieces: make(map[int]bool),
 		requests:       make(map[string]*Request),
+		fileWriter:     writer,
+		fileMapper:     mapper,
+		resumeData:     make(map[int]bool),
 		startTime:      time.Now(),
 	}
 
 	// Initialize pieces
 	for i, hash := range pieces {
 		length := pieceLength
-		// Last piece might be smaller
 		if i == len(pieces)-1 {
 			lastPieceLength := totalLength % pieceLength
 			if lastPieceLength != 0 {
 				length = lastPieceLength
 			}
 		}
-
 		manager.pieces[i] = NewPiece(i, hash, length)
 	}
 
 	return manager
+}
+
+// Initialize sets up the file system
+func (m *Manager) Initialize() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Initialize file writer
+	err := m.fileWriter.Initialize()
+	if err != nil {
+		return fmt.Errorf("failed to initialize file writer: %w", err)
+	}
+
+	// Check for existing files and resume data
+	err = m.loadResumeData()
+	if err != nil {
+		fmt.Printf("No resume data found, starting fresh download\n")
+	}
+
+	return nil
 }
 
 // GetPieceToRequest returns the next piece that should be requested
@@ -200,15 +233,28 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 	if piece.Complete {
 		// Validate the piece
 		if piece.Validate() {
+			// Write piece to files - Add this block
+			err := m.fileWriter.WritePiece(pieceIndex, piece.Data)
+			if err != nil {
+				fmt.Printf("Failed to write piece %d to file: %v\n", pieceIndex, err)
+				piece.Reset()
+				delete(m.pendingPieces, pieceIndex)
+				return fmt.Errorf("failed to write piece to file: %w", err)
+			}
+
 			m.completePieces[pieceIndex] = true
 			m.downloaded++
 			m.downloadedBytes += int64(piece.Length)
 			delete(m.pendingPieces, pieceIndex)
 
-			fmt.Printf("Piece %d completed and validated! Progress: %d/%d (%.1f%%)\n",
+			fmt.Printf("Piece %d completed and written to file! Progress: %d/%d (%.1f%%)\n",
 				pieceIndex, m.downloaded, m.totalPieces, m.GetProgress())
+
+			// Save resume data periodically
+			if m.downloaded%10 == 0 {
+				m.saveResumeData()
+			}
 		} else {
-			// Hash validation failed, reset piece
 			fmt.Printf("Piece %d failed validation, retrying...\n", pieceIndex)
 			piece.Reset()
 			delete(m.pendingPieces, pieceIndex)
@@ -276,4 +322,45 @@ func (m *Manager) GetCompletedPieces() map[int]bool {
 		completed[k] = v
 	}
 	return completed
+}
+
+// saveResumeData saves current progress for resume capability
+func (m *Manager) saveResumeData() {
+	// Simple implementation - in production you'd save to a file
+	m.resumeData = make(map[int]bool)
+	for k, v := range m.completePieces {
+		m.resumeData[k] = v
+	}
+}
+
+// loadResumeData loads previous progress
+func (m *Manager) loadResumeData() error {
+	// Verify existing files
+	err := m.fileWriter.VerifyFiles()
+	if err != nil {
+		return err
+	}
+
+	// Mark verified pieces as complete
+	// This is a simplified version - you'd implement proper resume logic
+	return nil
+}
+
+// Close closes the file writer
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.fileWriter != nil {
+		return m.fileWriter.Close()
+	}
+	return nil
+}
+
+// GetFileProgress returns file writing progress
+func (m *Manager) GetFileProgress() *file.Progress {
+	if m.fileWriter != nil {
+		return m.fileWriter.GetProgress()
+	}
+	return nil
 }
