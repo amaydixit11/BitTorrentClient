@@ -67,7 +67,7 @@ func (i *Info) GetTotalLength() int64 {
 	return total
 }
 
-// NewDownloader creates a new downloader for this torrent
-func (t *Torrent) NewDownloader() *Downloader {
-	return NewDownloader(t)
-}
+// // NewDownloader creates a new downloader for this torrent
+// func (t *Torrent) NewDownloader() *Downloader {
+// 	return NewDownloader(t)
+// }

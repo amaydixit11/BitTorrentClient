@@ -22,18 +22,6 @@ type Downloader struct {
 	downloadDone chan struct{}
 }
 
-func GetPieceManager(t *Torrent, outputDir string) *piece.Manager {
-	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
-	for i := 0; i < len(pieceHashes); i++ {
-		pieceHashes[i] = t.Info.Pieces[i]
-	}
-
-	// Create file info from torrent
-	fileInfos := createFileInfoFromTorrent(t)
-
-	return piece.NewManager(pieceHashes, t.Info.PieceLength, t.Info.GetTotalLength(), fileInfos, outputDir)
-}
-
 // NewDownloader creates a new downloader
 func NewDownloader(t *Torrent, outputDir string) *Downloader {
 	return &Downloader{
@@ -45,6 +33,18 @@ func NewDownloader(t *Torrent, outputDir string) *Downloader {
 		done:         make(chan struct{}),
 		downloadDone: make(chan struct{}),
 	}
+}
+
+func GetPieceManager(t *Torrent, outputDir string) *piece.Manager {
+	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
+	for i := 0; i < len(pieceHashes); i++ {
+		pieceHashes[i] = t.Info.Pieces[i]
+	}
+
+	// Create file info from torrent
+	fileInfos := createFileInfoFromTorrent(t)
+
+	return piece.NewManager(pieceHashes, t.Info.PieceLength, t.Info.GetTotalLength(), fileInfos, outputDir)
 }
 
 // Start starts the download process

@@ -1,15 +1,18 @@
 package peer
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
 // ConnectToPeer establishes a connection to a peer and performs handshake
-func ConnectToPeer(address string, infoHash, peerID [20]byte) (*Peer, error) {
-	// Establish TCP connection
-	conn, err := net.DialTimeout("tcp", address, 10*time.Second)
+func ConnectToPeer(ctx context.Context, address string, infoHash, peerID [20]byte) (*Peer, error) {
+	// Use context-aware dialer
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to peer %s: %w", address, err)
 	}
@@ -144,6 +147,8 @@ type Connection struct {
 	requestQueue chan *RequestItem
 	pieceQueue   chan *PieceData
 	done         chan struct{}
+	mu           sync.RWMutex // Add mutex for thread safety
+	connected    bool         // Track connection state
 }
 
 // RequestItem represents a piece request
@@ -168,6 +173,12 @@ func NewConnection(conn net.Conn, infoHash [20]byte) *Connection {
 		pieceQueue:   make(chan *PieceData, 100),
 		done:         make(chan struct{}),
 	}
+}
+
+func (c *Connection) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.connected
 }
 
 // Start starts the connection message loop

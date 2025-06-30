@@ -289,6 +289,7 @@ func (m *Manager) GetProgress() float64 {
 	if m.totalPieces == 0 {
 		return 0
 	}
+
 	return float64(m.downloaded) / float64(m.totalPieces) * 100
 }
 
@@ -342,7 +343,7 @@ func (m *Manager) loadResumeData() error {
 	}
 
 	// Mark verified pieces as complete
-	// This is a simplified version - you'd implement proper resume logic
+	// TODO: This is a simplified version - need to implement proper resume logic
 	return nil
 }
 
