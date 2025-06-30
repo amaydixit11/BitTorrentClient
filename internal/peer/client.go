@@ -26,29 +26,6 @@ func NewClient(infoHash [20]byte) *Client {
 	}
 }
 
-// ConnectToPeers connects to multiple peers
-func (c *Client) ConnectToPeers(addresses []string) error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	for _, addr := range addresses {
-		if _, exists := c.peers[addr]; exists {
-			continue // Already connected
-		}
-
-		peer, err := ConnectToPeer(addr, c.InfoHash, c.PeerID)
-		if err != nil {
-			fmt.Printf("Failed to connect to peer %s: %v\n", addr, err)
-			continue
-		}
-
-		c.peers[addr] = peer
-		fmt.Printf("Connected to peer %s\n", addr)
-	}
-
-	return nil
-}
-
 // GetPeer returns a peer by address
 func (c *Client) GetPeer(address string) (*Peer, bool) {
 	c.mutex.RLock()

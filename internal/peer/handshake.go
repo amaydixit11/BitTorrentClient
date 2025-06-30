@@ -110,8 +110,27 @@ func PerformHandshake(conn net.Conn, infoHash, peerID [20]byte) (*Handshake, err
 		return nil, fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// Read peer's handshake
-	buf := make([]byte, HandshakeSize)
+	// Read peer's handshake - first read pstrlen to determine total size
+	pstrLenBuf := make([]byte, 1)
+	_, err = io.ReadFull(conn, pstrLenBuf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pstrlen: %w", err)
+	}
+
+	pstrLen := int(pstrLenBuf[0])
+	if pstrLen != 19 {
+		return nil, fmt.Errorf("invalid protocol string length: %d", pstrLen)
+	}
+
+	// Read the rest of the handshake
+	remaining := make([]byte, pstrLen+8+20+20) // pstr + reserved + info_hash + peer_id
+	_, err = io.ReadFull(conn, remaining)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read handshake: %w", err)
+	}
+
+	// Combine for deserialization
+	buf := append(pstrLenBuf, remaining...)
 	_, err = io.ReadFull(conn, buf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read handshake: %w", err)
