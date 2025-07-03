@@ -58,19 +58,30 @@ func (a *Allocator) AllocateFile(filePath string, size int64) error {
 	}
 }
 
-// allocateSparse creates a sparse file
+// Better error handling for file operations
 func (a *Allocator) allocateSparse(filePath string, size int64) error {
-	// Create the file
+	if size < 0 {
+		return fmt.Errorf("invalid size: %d", size)
+	}
+
 	file, err := os.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer file.Close()
 
-	// Truncate to desired size (creates sparse file on most filesystems)
-	err = file.Truncate(size)
-	if err != nil {
-		return fmt.Errorf("failed to truncate file: %w", err)
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = fmt.Errorf("failed to close file: %w", closeErr)
+		}
+	}()
+
+	// Use Seek + Write for better sparse file support
+	if _, err := file.Seek(size-1, 0); err != nil {
+		return fmt.Errorf("failed to seek: %w", err)
+	}
+
+	if _, err := file.Write([]byte{0}); err != nil {
+		return fmt.Errorf("failed to write: %w", err)
 	}
 
 	return nil

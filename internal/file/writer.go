@@ -184,7 +184,7 @@ func (w *Writer) GetProgress() *Progress {
 }
 
 // VerifyFiles verifies that all files are complete and correct
-func (w *Writer) VerifyFiles() error {
+func (w *Writer) VerifyFiles() ([]FileInfo, error) {
 	files := w.mapper.GetAllFiles()
 
 	for i, file := range files {
@@ -193,12 +193,12 @@ func (w *Writer) VerifyFiles() error {
 		// Check if file exists
 		stat, err := os.Stat(fullPath)
 		if err != nil {
-			return fmt.Errorf("file %s not found: %w", fullPath, err)
+			return nil, fmt.Errorf("file %s not found: %w", fullPath, err)
 		}
 
 		// Check file size
 		if stat.Size() != file.Length {
-			return fmt.Errorf("file %s has incorrect size: expected %d, got %d",
+			return nil, fmt.Errorf("file %s has incorrect size: expected %d, got %d",
 				fullPath, file.Length, stat.Size())
 		}
 
@@ -206,7 +206,7 @@ func (w *Writer) VerifyFiles() error {
 		w.progress.SetFileComplete(i, true)
 	}
 
-	return nil
+	return files, nil
 }
 
 // GetOutputDirectory returns the output directory path

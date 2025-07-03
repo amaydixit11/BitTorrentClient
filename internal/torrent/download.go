@@ -153,9 +153,14 @@ func (d *Downloader) downloadLoop() {
 func (d *Downloader) handlePeer(conn *peer.Connection) {
 	defer d.RemovePeer(conn.ID)
 
+	fmt.Printf("Handling peer %x\n", conn.ID[:8]) // Add this debug line
+
 	// Send interested message if peer has pieces we need
 	if conn.IsUseful(d.pieceManager.GetCompletedPieces(), d.pieceManager.GetTotalPieces()) {
+		fmt.Printf("Peer %x is useful, sending interested\n", conn.ID[:8]) // Add this debug line
 		conn.SendInterested()
+	} else {
+		fmt.Printf("Peer %x is not useful\n", conn.ID[:8]) // Add this debug line
 	}
 
 	// Handle incoming piece data

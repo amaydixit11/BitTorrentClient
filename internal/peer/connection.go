@@ -90,57 +90,6 @@ func (p *Peer) SendRequest(index, begin, length uint32) error {
 	return p.SendMessage(NewRequestMessage(index, begin, length))
 }
 
-// HandleMessage processes an incoming message and updates peer state
-func (p *Peer) HandleMessage(msg *Message) error {
-	if msg == nil {
-		// Keep-alive message, do nothing
-		return nil
-	}
-
-	switch msg.ID {
-	case MsgChoke:
-		p.Choked = true
-
-	case MsgUnchoke:
-		p.Choked = false
-
-	case MsgInterested:
-		p.Interested = true
-
-	case MsgNotInterested:
-		p.Interested = false
-
-	case MsgHave:
-		pieceIndex, err := ParseHaveMessage(msg.Payload)
-		if err != nil {
-			return fmt.Errorf("invalid have message: %w", err)
-		}
-		p.SetPiece(int(pieceIndex))
-
-	case MsgBitfield:
-		// Initialize or update bitfield
-		p.Bitfield = make([]byte, len(msg.Payload))
-		copy(p.Bitfield, msg.Payload)
-
-	case MsgRequest:
-		// TODO: Handle incoming request (for serving files)
-		// This will be implemented in later phases
-
-	case MsgPiece:
-		// Handle incoming piece data
-		// This will be implemented in phase 4
-
-	case MsgCancel:
-		// Handle cancel request
-		// This will be implemented in later phases if needed
-
-	default:
-		return fmt.Errorf("unknown message ID: %d", msg.ID)
-	}
-
-	return nil
-}
-
 // Connection represents a connection to a peer with download capabilities
 type Connection struct {
 	*Peer
@@ -276,43 +225,82 @@ func (c *Connection) messageLoop() {
 // handleMessage processes incoming messages
 func (c *Connection) handleMessage(msg *Message) error {
 	if msg == nil {
-		// Keep-alive message
+		// Keep-alive message - reset any timeout counters if needed
 		return nil
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	switch msg.ID {
 	case MsgChoke:
 		c.Choked = true
 		fmt.Printf("Peer %x choked us\n", c.ID[:8])
+		// Clear any pending requests since we're now choked
+		c.clearPendingRequests()
 
 	case MsgUnchoke:
 		c.Choked = false
 		fmt.Printf("Peer %x unchoked us\n", c.ID[:8])
+		// We can now start requesting pieces again
 
 	case MsgInterested:
 		c.Interested = true
+		fmt.Printf("Peer %x is interested in our pieces\n", c.ID[:8])
 
 	case MsgNotInterested:
 		c.Interested = false
+		fmt.Printf("Peer %x is not interested in our pieces\n", c.ID[:8])
 
 	case MsgHave:
+		if len(msg.Payload) != 4 {
+			return fmt.Errorf("invalid have message payload length: %d", len(msg.Payload))
+		}
+
 		pieceIndex, err := ParseHaveMessage(msg.Payload)
 		if err != nil {
 			return fmt.Errorf("invalid have message: %w", err)
 		}
+
+		// Validate piece index
+		if pieceIndex < 0 {
+			return fmt.Errorf("invalid piece index: %d", pieceIndex)
+		}
+
 		c.SetPiece(int(pieceIndex))
+		fmt.Printf("Peer %x has piece %d\n", c.ID[:8], pieceIndex)
 
 	case MsgBitfield:
+		// Validate bitfield length
+		if len(msg.Payload) == 0 {
+			return fmt.Errorf("empty bitfield message")
+		}
+
 		// Initialize or update bitfield
 		c.Bitfield = make([]byte, len(msg.Payload))
 		copy(c.Bitfield, msg.Payload)
+		fmt.Printf("Peer %x sent bitfield of length %d\n", c.ID[:8], len(msg.Payload))
 
 	case MsgPiece:
+		// Validate minimum payload length (4 bytes index + 4 bytes begin + at least 1 byte data)
+		if len(msg.Payload) < 9 {
+			return fmt.Errorf("invalid piece message payload length: %d", len(msg.Payload))
+		}
+
 		// Handle incoming piece data
 		index, begin, data, err := ParsePieceMessage(msg.Payload)
 		if err != nil {
 			return fmt.Errorf("invalid piece message: %w", err)
 		}
+
+		// Validate piece data
+		if index < 0 || begin < 0 || len(data) == 0 {
+			return fmt.Errorf("invalid piece data: index=%d, begin=%d, data_len=%d",
+				index, begin, len(data))
+		}
+
+		fmt.Printf("Received piece %d, begin %d, length %d from peer %x\n",
+			index, begin, len(data), c.ID[:8])
 
 		// Send piece data to piece queue
 		select {
@@ -324,23 +312,106 @@ func (c *Connection) handleMessage(msg *Message) error {
 		case <-c.done:
 			return fmt.Errorf("connection closed")
 		default:
-			// Queue full, drop the data (shouldn't happen with proper flow control)
-			fmt.Printf("Warning: piece queue full, dropping data\n")
+			// Queue full - this indicates a flow control issue
+			fmt.Printf("Warning: piece queue full, dropping data for piece %d\n", index)
 		}
 
 	case MsgRequest:
-		// TODO: Handle incoming request (for serving files)
-		// This will be implemented in later phases
+		// Handle incoming request from peer (they want a piece from us)
+		if len(msg.Payload) != 12 {
+			return fmt.Errorf("invalid request message payload length: %d", len(msg.Payload))
+		}
+
+		index, begin, length, err := ParseRequestMessage(msg.Payload)
+		if err != nil {
+			return fmt.Errorf("invalid request message: %w", err)
+		}
+
+		// Validate request parameters
+		if index < 0 || begin < 0 || length <= 0 {
+			return fmt.Errorf("invalid request parameters: index=%d, begin=%d, length=%d",
+				index, begin, length)
+		}
+
+		// Check if we're choking this peer
+		if c.Choking {
+			fmt.Printf("Ignoring request from choked peer %x\n", c.ID[:8])
+			return nil
+		}
+
+		// Check if we have the requested piece
+		if !c.HasPiece(int(index)) {
+			fmt.Printf("Peer %x requested piece %d that we don't have\n", c.ID[:8], index)
+			return nil
+		}
+
+		fmt.Printf("Peer %x requested piece %d, begin %d, length %d\n",
+			c.ID[:8], index, begin, length)
+
+		// TODO: Implement piece serving logic
+		// This would involve:
+		// 1. Reading the piece data from disk
+		// 2. Extracting the requested block
+		// 3. Sending a piece message back to the peer
+		// For now, we'll just log it
+		fmt.Printf("TODO: Serve piece %d to peer %x\n", index, c.ID[:8])
 
 	case MsgCancel:
-		// TODO: Handle cancel request
-		// This will be implemented in later phases if needed
+		// Handle cancel request
+		if len(msg.Payload) != 12 {
+			return fmt.Errorf("invalid cancel message payload length: %d", len(msg.Payload))
+		}
+
+		index, begin, length, err := ParseCancelMessage(msg.Payload)
+		if err != nil {
+			return fmt.Errorf("invalid cancel message: %w", err)
+		}
+
+		fmt.Printf("Peer %x cancelled request for piece %d, begin %d, length %d\n",
+			c.ID[:8], index, begin, length)
+
+		// TODO: Cancel any pending uploads for this request
+		// This would involve:
+		// 1. Finding the matching request in our upload queue
+		// 2. Removing it from the queue
+		// 3. Freeing any associated resources
+		// For now, we'll just log it
+		fmt.Printf("TODO: Cancel upload for piece %d to peer %x\n", index, c.ID[:8])
+
+	case MsgPort:
+		// Handle port message (for DHT)
+		if len(msg.Payload) != 2 {
+			return fmt.Errorf("invalid port message payload length: %d", len(msg.Payload))
+		}
+
+		port := ParsePortMessage(msg.Payload)
+		fmt.Printf("Peer %x DHT port: %d\n", c.ID[:8], port)
+
+		// TODO: Store DHT port information if implementing DHT support
 
 	default:
-		return fmt.Errorf("unknown message ID: %d", msg.ID)
+		// Unknown message type - log but don't error
+		fmt.Printf("Unknown message ID %d from peer %x, payload length: %d\n",
+			msg.ID, c.ID[:8], len(msg.Payload))
+
+		// According to BEP-0003, unknown messages should be ignored
+		return nil
 	}
 
 	return nil
+}
+
+// clearPendingRequests clears any pending requests when we get choked
+func (c *Connection) clearPendingRequests() {
+	// Drain the request queue
+	for {
+		select {
+		case <-c.requestQueue:
+			// Request cleared
+		default:
+			return
+		}
+	}
 }
 
 // IsUseful returns true if this peer has pieces we need
