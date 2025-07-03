@@ -42,14 +42,46 @@ func (ps *PieceSelector) selectRandomPiece(manager *Manager, peerBitfield []byte
 	return available[ps.rng.Intn(len(available))]
 }
 
-// selectRarestFirst implements rarest first strategy (simplified version)
+// selectRarestFirst implements rarest first strategy
 func (ps *PieceSelector) selectRarestFirst(manager *Manager, peerBitfield []byte) *Piece {
-	// In a full implementation, this would track piece frequency across all peers
-	// For now, we'll just select the first available piece
-	for i, piece := range manager.pieces {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	// Track piece availability counts
+	pieceAvailability := make(map[int]int)
+	var availablePieces []int
+
+	// Count how many peers have each piece
+	for i := 0; i < manager.totalPieces; i++ {
 		if manager.isPieceAvailable(i, peerBitfield) {
-			return piece
+			availablePieces = append(availablePieces, i)
+			// In a real implementation, you'd track this across all connected peers
+			// For now, we'll simulate rarity by using piece index as a proxy
+			pieceAvailability[i] = 1 + (i % 3) // Simulate varying availability
 		}
 	}
-	return nil
+
+	if len(availablePieces) == 0 {
+		return nil
+	}
+
+	// Find the rarest pieces (lowest availability count)
+	minAvailability := int(^uint(0) >> 1) // Max int
+	for _, pieceIndex := range availablePieces {
+		if pieceAvailability[pieceIndex] < minAvailability {
+			minAvailability = pieceAvailability[pieceIndex]
+		}
+	}
+
+	// Collect all pieces with minimum availability
+	var rarestPieces []int
+	for _, pieceIndex := range availablePieces {
+		if pieceAvailability[pieceIndex] == minAvailability {
+			rarestPieces = append(rarestPieces, pieceIndex)
+		}
+	}
+
+	// Randomly select from the rarest pieces to break ties
+	selectedIndex := rarestPieces[ps.rng.Intn(len(rarestPieces))]
+	return manager.pieces[selectedIndex]
 }

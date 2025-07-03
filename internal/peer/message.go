@@ -139,31 +139,55 @@ func NewRequestMessage(index, begin, length uint32) *Message {
 		Payload: payload,
 	}
 }
-
-// ParseRequestMessage parses a request message payload
-func ParseRequestMessage(payload []byte) (index, begin, length uint32, err error) {
-	if len(payload) != 12 {
-		return 0, 0, 0, fmt.Errorf("invalid request payload length: %d", len(payload))
+func ParseHaveMessage(payload []byte) (uint32, error) {
+	if len(payload) != 4 {
+		return 0, fmt.Errorf("invalid have message length: %d", len(payload))
 	}
 
-	index = binary.BigEndian.Uint32(payload[0:4])
-	begin = binary.BigEndian.Uint32(payload[4:8])
-	length = binary.BigEndian.Uint32(payload[8:12])
+	index := uint32(payload[0])<<24 | uint32(payload[1])<<16 |
+		uint32(payload[2])<<8 | uint32(payload[3])
+	return index, nil
+}
+
+func ParsePieceMessage(payload []byte) (index, begin uint32, data []byte, err error) {
+	if len(payload) < 8 {
+		return 0, 0, nil, fmt.Errorf("piece message too short: %d", len(payload))
+	}
+
+	index = uint32(payload[0])<<24 | uint32(payload[1])<<16 |
+		uint32(payload[2])<<8 | uint32(payload[3])
+	begin = uint32(payload[4])<<24 | uint32(payload[5])<<16 |
+		uint32(payload[6])<<8 | uint32(payload[7])
+	data = payload[8:]
+
+	return index, begin, data, nil
+}
+
+func ParseRequestMessage(payload []byte) (index, begin, length uint32, err error) {
+	if len(payload) != 12 {
+		return 0, 0, 0, fmt.Errorf("invalid request message length: %d", len(payload))
+	}
+
+	index = uint32(payload[0])<<24 | uint32(payload[1])<<16 |
+		uint32(payload[2])<<8 | uint32(payload[3])
+	begin = uint32(payload[4])<<24 | uint32(payload[5])<<16 |
+		uint32(payload[6])<<8 | uint32(payload[7])
+	length = uint32(payload[8])<<24 | uint32(payload[9])<<16 |
+		uint32(payload[10])<<8 | uint32(payload[11])
 
 	return index, begin, length, nil
 }
 
-// ParsePieceMessage parses a piece message payload
-func ParsePieceMessage(payload []byte) (index, begin uint32, data []byte, err error) {
-	if len(payload) < 8 {
-		return 0, 0, nil, fmt.Errorf("invalid piece payload length: %d", len(payload))
+func ParseCancelMessage(payload []byte) (index, begin, length uint32, err error) {
+	// Cancel message has the same format as request message
+	return ParseRequestMessage(payload)
+}
+
+func ParsePortMessage(payload []byte) uint16 {
+	if len(payload) != 2 {
+		return 0
 	}
-
-	index = binary.BigEndian.Uint32(payload[0:4])
-	begin = binary.BigEndian.Uint32(payload[4:8])
-	data = payload[8:]
-
-	return index, begin, data, nil
+	return uint16(payload[0])<<8 | uint16(payload[1])
 }
 
 // NewPieceMessage creates a piece message
@@ -177,12 +201,4 @@ func NewPieceMessage(index, begin uint32, data []byte) *Message {
 		ID:      MsgPiece,
 		Payload: payload,
 	}
-}
-
-// ParseHaveMessage parses a have message payload
-func ParseHaveMessage(payload []byte) (uint32, error) {
-	if len(payload) != 4 {
-		return 0, fmt.Errorf("invalid have payload length: %d", len(payload))
-	}
-	return binary.BigEndian.Uint32(payload), nil
 }

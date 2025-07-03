@@ -4,6 +4,7 @@ import (
 	"bittorrentclient/internal/file"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 )
@@ -257,6 +258,7 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 		} else {
 			fmt.Printf("Piece %d failed validation, retrying...\n", pieceIndex)
 			piece.Reset()
+			m.cleanupPieceRequests(pieceIndex)
 			delete(m.pendingPieces, pieceIndex)
 		}
 	}
@@ -337,12 +339,22 @@ func (m *Manager) saveResumeData() {
 // loadResumeData loads previous progress
 func (m *Manager) loadResumeData() error {
 	// Verify existing files
-	err := m.fileWriter.VerifyFiles()
+	verifiedPieces, err := m.fileWriter.VerifyFiles()
 	if err != nil {
 		return err
 	}
 
 	// Mark verified pieces as complete
+	for pieceIndex := range verifiedPieces {
+		if pieceIndex < len(m.pieces) {
+			m.completePieces[pieceIndex] = true
+			m.downloaded++
+			m.downloadedBytes += int64(m.pieces[pieceIndex].Length)
+		}
+	}
+	// Load any additional resume data from disk (if implemented)
+	// This would restore the resumeData map from a saved file
+
 	// TODO: This is a simplified version - need to implement proper resume logic
 	return nil
 }
@@ -364,4 +376,11 @@ func (m *Manager) GetFileProgress() *file.Progress {
 		return m.fileWriter.GetProgress()
 	}
 	return nil
+}
+func (m *Manager) cleanupPieceRequests(pieceIndex int) {
+	for key := range m.requests {
+		if strings.HasPrefix(key, fmt.Sprintf("%d:", pieceIndex)) {
+			delete(m.requests, key)
+		}
+	}
 }

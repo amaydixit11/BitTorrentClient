@@ -29,44 +29,6 @@ func (t *Torrent) Validate() error {
 	return t.Info.Validate()
 }
 
-// In info.go
-func (i *Info) Validate() error {
-	if i.Name == "" {
-		return errors.New("torrent name cannot be empty")
-	}
-
-	if i.PieceLength <= 0 {
-		return errors.New("piece length must be positive")
-	}
-
-	if len(i.Pieces) == 0 {
-		return errors.New("no piece hashes provided")
-	}
-
-	// Validate single vs multi-file consistency
-	if i.IsSingleFile() && i.IsMultiFile() {
-		return errors.New("torrent cannot be both single-file and multi-file")
-	}
-
-	if !i.IsSingleFile() && !i.IsMultiFile() {
-		return errors.New("torrent must specify either length or files")
-	}
-
-	return nil
-}
-
-func (i *Info) GetTotalLength() int64 {
-	if i.IsSingleFile() {
-		return *i.Length
-	}
-
-	var total int64
-	for _, file := range i.Files {
-		total += file.Length
-	}
-	return total
-}
-
 // // NewDownloader creates a new downloader for this torrent
 // func (t *Torrent) NewDownloader() *Downloader {
 // 	return NewDownloader(t)

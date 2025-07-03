@@ -131,10 +131,10 @@ func PerformHandshake(conn net.Conn, infoHash, peerID [20]byte) (*Handshake, err
 
 	// Combine for deserialization
 	buf := append(pstrLenBuf, remaining...)
-	_, err = io.ReadFull(conn, buf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read handshake: %w", err)
-	}
+	// _, err = io.ReadFull(conn, buf)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to read handshake: %w", err)
+	// }
 
 	// Deserialize peer's handshake
 	res, err := DeserializeHandshake(buf)
