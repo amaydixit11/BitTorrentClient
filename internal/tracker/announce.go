@@ -138,11 +138,3 @@ func (tc *TrackerClient) Announce(announceURL string, req *TrackerRequest) (*Tra
 
 	return respParsed, nil
 }
-
-// min helper for slicing
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

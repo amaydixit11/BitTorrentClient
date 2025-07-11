@@ -1,6 +1,9 @@
 package torrent
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Info represents the info dictionary of a torrent
 type Info struct {
@@ -63,4 +66,42 @@ func (i *Info) LastPieceLength() int64 {
 		return i.PieceLength
 	}
 	return remainder
+}
+
+// In info.go
+func (i *Info) Validate() error {
+	if i.Name == "" {
+		return errors.New("torrent name cannot be empty")
+	}
+
+	if i.PieceLength <= 0 {
+		return errors.New("piece length must be positive")
+	}
+
+	if len(i.Pieces) == 0 {
+		return errors.New("no piece hashes provided")
+	}
+
+	// Validate single vs multi-file consistency
+	if i.IsSingleFile() && i.IsMultiFile() {
+		return errors.New("torrent cannot be both single-file and multi-file")
+	}
+
+	if !i.IsSingleFile() && !i.IsMultiFile() {
+		return errors.New("torrent must specify either length or files")
+	}
+
+	return nil
+}
+
+func (i *Info) GetTotalLength() int64 {
+	if i.IsSingleFile() {
+		return *i.Length
+	}
+
+	var total int64
+	for _, file := range i.Files {
+		total += file.Length
+	}
+	return total
 }

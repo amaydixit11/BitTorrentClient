@@ -98,6 +98,8 @@ type Connection struct {
 	done         chan struct{}
 	mu           sync.RWMutex // Add mutex for thread safety
 	connected    bool         // Track connection state
+	stopOnce     sync.Once    // Ensure Stop() is only called once
+	stopped      bool         // Track if connection is stopped
 }
 
 // RequestItem represents a piece request
@@ -121,13 +123,14 @@ func NewConnection(conn net.Conn, infoHash [20]byte) *Connection {
 		requestQueue: make(chan *RequestItem, 100),
 		pieceQueue:   make(chan *PieceData, 100),
 		done:         make(chan struct{}),
+		connected:    true,
 	}
 }
 
 func (c *Connection) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.connected
+	return c.connected && !c.stopped
 }
 
 // Start starts the connection message loop
@@ -135,14 +138,37 @@ func (c *Connection) Start() {
 	go c.messageLoop()
 }
 
-// Stop stops the connection
+// Stop stops the connection - thread-safe, can be called multiple times
 func (c *Connection) Stop() {
-	close(c.done)
-	c.Close()
+	c.stopOnce.Do(func() {
+		c.mu.Lock()
+		c.stopped = true
+		c.connected = false
+		c.mu.Unlock()
+
+		// Close the done channel only once
+		close(c.done)
+
+		// Close the connection
+		if c.Conn != nil {
+			c.Conn.Close()
+		}
+	})
+}
+
+// IsStopped returns true if the connection has been stopped
+func (c *Connection) IsStopped() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.stopped
 }
 
 // RequestPiece queues a piece request
 func (c *Connection) RequestPiece(pieceIndex, begin int64, length int64) error {
+	if c.IsStopped() {
+		return fmt.Errorf("connection stopped")
+	}
+
 	if c.Choked {
 		return fmt.Errorf("peer is choking us")
 	}
@@ -168,7 +194,13 @@ func (c *Connection) GetPieceData() <-chan *PieceData {
 
 // messageLoop handles incoming and outgoing messages
 func (c *Connection) messageLoop() {
-	defer c.Stop()
+	// Remove the defer c.Stop() to prevent double-closing
+	defer func() {
+		// Only stop if not already stopped
+		if !c.IsStopped() {
+			c.Stop()
+		}
+	}()
 
 	// Set up ticker for keep-alive messages
 	keepAliveTicker := time.NewTicker(2 * time.Minute)
@@ -180,6 +212,10 @@ func (c *Connection) messageLoop() {
 			return
 
 		case req := <-c.requestQueue:
+			if c.IsStopped() {
+				return
+			}
+
 			// Send request message
 			err := c.SendMessage(NewRequestMessage(
 				uint32(req.PieceIndex),
@@ -192,6 +228,10 @@ func (c *Connection) messageLoop() {
 			}
 
 		case <-keepAliveTicker.C:
+			if c.IsStopped() {
+				return
+			}
+
 			// Send keep-alive
 			err := c.SendKeepAlive()
 			if err != nil {
@@ -200,6 +240,10 @@ func (c *Connection) messageLoop() {
 			}
 
 		default:
+			if c.IsStopped() {
+				return
+			}
+
 			// Read incoming messages
 			c.Conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 			msg, err := c.ReadMessage()
@@ -389,13 +433,12 @@ func (c *Connection) handleMessage(msg *Message) error {
 
 		// TODO: Store DHT port information if implementing DHT support
 
+	// In your message handling switch statement, add:
 	default:
-		// Unknown message type - log but don't error
-		fmt.Printf("Unknown message ID %d from peer %x, payload length: %d\n",
+		fmt.Printf("Unknown message ID %d from peer %s, payload length: %d\n",
 			msg.ID, c.ID[:8], len(msg.Payload))
+		// Don't return error - just continue processing
 
-		// According to BEP-0003, unknown messages should be ignored
-		return nil
 	}
 
 	return nil
