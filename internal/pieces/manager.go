@@ -231,7 +231,11 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 	}
 
 	// Check if piece is complete
-	if piece.Complete {
+	if piece.IsComplete() {
+		fmt.Printf("Validating piece %d with blocks:\n", pieceIndex)
+		for i, received := range piece.Downloaded {
+			fmt.Printf("  Block %d: received=%v\n", i, received)
+		}
 		// Validate the piece
 		if piece.Validate() {
 			// Write piece to files - Add this block
@@ -338,25 +342,9 @@ func (m *Manager) saveResumeData() {
 
 // loadResumeData loads previous progress
 func (m *Manager) loadResumeData() error {
-	// Verify existing files
-	verifiedPieces, err := m.fileWriter.VerifyFiles()
-	if err != nil {
-		return err
-	}
-
-	// Mark verified pieces as complete
-	for pieceIndex := range verifiedPieces {
-		if pieceIndex < len(m.pieces) {
-			m.completePieces[pieceIndex] = true
-			m.downloaded++
-			m.downloadedBytes += int64(m.pieces[pieceIndex].Length)
-		}
-	}
-	// Load any additional resume data from disk (if implemented)
-	// This would restore the resumeData map from a saved file
-
-	// TODO: This is a simplified version - need to implement proper resume logic
-	return nil
+	// Simply return an error to indicate no resume data
+	// This will force a fresh download
+	return fmt.Errorf("no resume data available")
 }
 
 // Close closes the file writer
@@ -383,4 +371,12 @@ func (m *Manager) cleanupPieceRequests(pieceIndex int) {
 			delete(m.requests, key)
 		}
 	}
+}
+func (p *Piece) IsComplete() bool {
+	for _, r := range p.Downloaded {
+		if !r {
+			return false
+		}
+	}
+	return true
 }

@@ -128,8 +128,7 @@ func (m *Mapper) ValidatePieceData(pieceIndex int, data []byte) error {
 	}
 
 	if int64(len(data)) != expectedLength {
-		return fmt.Errorf("piece data length mismatch: expected %d, got %d",
-			expectedLength, len(data))
+		return fmt.Errorf("piece data length mismatch: expected %d, got %d", expectedLength, len(data))
 	}
 
 	return nil
