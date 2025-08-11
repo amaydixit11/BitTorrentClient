@@ -66,14 +66,11 @@ func (w *Writer) Initialize() error {
 
 // WritePiece writes a completed piece to its corresponding files
 func (w *Writer) WritePiece(pieceIndex int, data []byte) error {
-
-	// Validate piece data
 	err := w.mapper.ValidatePieceData(pieceIndex, data)
 	if err != nil {
 		return fmt.Errorf("piece validation failed: %w", err)
 	}
 
-	// Get piece mapping
 	mapping, err := w.mapper.GetPieceMapping(pieceIndex)
 	if err != nil {
 		return fmt.Errorf("failed to get piece mapping: %w", err)
@@ -84,28 +81,19 @@ func (w *Writer) WritePiece(pieceIndex int, data []byte) error {
 
 	dataOffset := int64(0)
 
-	// Write to each file that this piece affects
 	for _, fileRange := range mapping.FileRanges {
 		fullPath := filepath.Join(w.outputDir, fileRange.FilePath)
 
-		// Get file handle
 		file, err := w.getFileHandle(fullPath)
 		if err != nil {
 			return fmt.Errorf("failed to get file handle for %s: %w", fullPath, err)
 		}
 
-		// Seek to correct position
 		_, err = file.Seek(fileRange.Offset, 0)
 		if err != nil {
 			return fmt.Errorf("failed to seek in file %s: %w", fullPath, err)
 		}
 
-		if dataOffset+fileRange.Length > int64(len(data)) {
-			return fmt.Errorf("data slice overflow: offset=%d + length=%d > data=%d",
-				dataOffset, fileRange.Length, len(data))
-		}
-
-		// Write data
 		dataToWrite := data[dataOffset : dataOffset+fileRange.Length]
 		written, err := file.Write(dataToWrite)
 		if err != nil {
@@ -117,16 +105,16 @@ func (w *Writer) WritePiece(pieceIndex int, data []byte) error {
 				fullPath, written, fileRange.Length)
 		}
 
-		// Update progress
+		// Update progress and log
 		w.progress.AddWrittenBytes(fileRange.FileIndex, fileRange.Length)
+		fmt.Printf("Updated progress for file %s: Added %d bytes, Total Written: %d/%d\n",
+			fileRange.FilePath, fileRange.Length, w.progress.GetWrittenBytes(), w.progress.GetTotalBytes())
 
 		dataOffset += fileRange.Length
 		fmt.Printf("Piece %d, Writing to %s, fileOffset=%d, dataOffset=%d, len=%d\n",
 			pieceIndex, fileRange.FilePath, fileRange.Offset, dataOffset, fileRange.Length)
-
 	}
 
-	// Sync files to ensure data is written to disk
 	for _, fileRange := range mapping.FileRanges {
 		fullPath := filepath.Join(w.outputDir, fileRange.FilePath)
 		if file, exists := w.fileHandles[fullPath]; exists {

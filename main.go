@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"bittorrentclient/internal/peer"
@@ -21,12 +23,12 @@ func generatePeerID() [20]byte {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <torrent-file> [output-directory]")
-		os.Exit(1)
-	}
+	//if len(os.Args) < 2 {
+	//	fmt.Println("Usage: go run main.go <torrent-file> [output-directory]")
+	//	os.Exit(1)
+	//}
 
-	torrentFile := os.Args[1]
+	torrentFile := "small.torrent"
 	outputDir := "./downloads"
 	if len(os.Args) >= 3 {
 		outputDir = os.Args[2]
@@ -89,10 +91,9 @@ func main() {
 
 	fmt.Println("\n🔍 STEP 6: Connecting to peers (ONE AT A TIME)...")
 	connectedPeers := 0
-	maxPeers := 3 // Very limited for debugging
+	maxPeers := 10 // Increased from 3
 
-	// Create a context with timeout for peer connections
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased from 10s
 	defer cancel()
 
 	for i, p := range resp.Peers {
@@ -120,7 +121,6 @@ func main() {
 
 		fmt.Printf("   📊 Added peer to downloader (total: %d)\n", connectedPeers)
 
-		// Small delay between connections for debugging
 		time.Sleep(1 * time.Second)
 	}
 
@@ -133,78 +133,142 @@ func main() {
 	fmt.Println("\n🔍 STEP 7: Starting download monitoring...")
 	fmt.Println("   📊 Progress will be shown every 5 seconds")
 	fmt.Println("   🛑 Press Ctrl+C to stop\n")
+	// Replace the section from "STEP 7" to the end of the main function.
+	fmt.Printf("✅ Connected to %d peers successfully\n", connectedPeers)
 
-	// Give peers a moment to exchange initial messages
-	time.Sleep(3 * time.Second)
+	fmt.Println("\n🔍 STEP 7: Starting download monitoring...")
+	fmt.Println("   📊 Progress will be shown every 5 seconds")
+	fmt.Println("   🛑 Press Ctrl+C to stop\n")
 
-	// Simple progress monitoring loop with crash protection
-	iteration := 0
+	// Create a channel to listen for OS signals (like Ctrl+C)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	progressTicker := time.NewTicker(5 * time.Second)
+	defer progressTicker.Stop()
+
+	// Main monitoring loop
 	for {
-		// Use defer to catch any panics in the monitoring loop
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Printf("❌ Panic in monitoring loop: %v\n", r)
-				}
-			}()
+		select {
+		case <-progressTicker.C:
+			progress := downloader.GetProgress()
+			isComplete := downloader.IsComplete()
 
-			time.Sleep(5 * time.Second)
-			iteration++
-
-			// Safely get progress
-			var progress float64
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Printf("❌ Panic getting progress: %v\n", r)
-						progress = -1
-					}
-				}()
-				progress = downloader.GetProgress()
-			}()
-
-			if progress >= 0 {
-				fmt.Printf("📊 Progress: %.1f%% (iteration %d)\n", progress, iteration)
-			} else {
-				fmt.Printf("📊 Progress: ERROR (iteration %d)\n", iteration)
+			// Get some diagnostic info from the piece manager
+			var speed float64
+			var downloadedPieces, totalPieces int
+			if downloader.GetPieceMgr() != nil {
+				speed = downloader.GetPieceMgr().GetDownloadSpeed()
+				downloadedPieces = downloader.GetPieceMgr().GetDownloaded()
+				totalPieces = downloader.GetPieceMgr().GetTotalPieces()
 			}
 
-			// Add some diagnostics every few iterations
-			if iteration%3 == 0 {
-				fmt.Println("🔍 DIAGNOSTIC INFO:")
-				fmt.Printf("   - Total pieces needed: %d\n", len(t.Info.Pieces)/20)
-				fmt.Printf("   - Connected peers: %d\n", connectedPeers)
+			fmt.Printf("📊 Progress: %.2f%% (%d/%d pieces) | Speed: %.2f KB/s\n",
+				progress, downloadedPieces, totalPieces, speed/1024)
 
-				// Safely check if complete
-				var isComplete bool
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							fmt.Printf("❌ Panic checking completion: %v\n", r)
-							isComplete = false
-						}
-					}()
-					isComplete = downloader.IsComplete()
-				}()
-
-				fmt.Printf("   - Downloader complete: %v\n", isComplete)
-
-				if isComplete {
-					fmt.Printf("🎉 Download completed! Files saved to: %s\n", outputDir)
-					downloader.Stop()
-					return
-				}
-			}
-
-			// Safety exit after reasonable time for debugging
-			if iteration > 20 {
-				fmt.Println("⏰ Stopping after 20 iterations for debugging")
+			if isComplete {
+				fmt.Printf("\n🎉 Download completed! Files saved to: %s\n", outputDir)
 				downloader.Stop()
-				return
+				return // Exit main
 			}
-		}()
+
+		case <-signals:
+			// Signal received, start graceful shutdown.
+			fmt.Println("\n🛑 Shutdown signal received. Stopping downloader...")
+			downloader.Stop()
+			// You might want to wait for the downloader to finish stopping here.
+			// For now, we'll just exit.
+			fmt.Println("Downloader stopped. Exiting.")
+			return // Exit main
+		}
 	}
 }
+
+// You will also need to add these imports to main.go:
+// import "os/signal"
+// import "syscall"
+// // Give peers a moment to exchange initial messages
+// time.Sleep(3 * time.Second)
+
+// // Simple progress monitoring loop with crash protection
+// iteration := 0
+// for {
+// 	func() {
+// 		defer func() {
+// 			if r := recover(); r != nil {
+// 				fmt.Printf("❌ Panic in monitoring loop: %v\n", r)
+// 			}
+// 		}()
+
+// 		time.Sleep(5 * time.Second)
+// 		iteration++
+
+// 		// Get both piece and file progress
+// 		var pieceProgress float64
+// 		var fileProgress *file.Progress
+// 		func() {
+// 			defer func() {
+// 				if r := recover(); r != nil {
+// 					fmt.Printf("❌ Panic getting progress: %v\n", r)
+// 					pieceProgress = -1
+// 				}
+// 			}()
+// 			pieceProgress = downloader.GetProgress()
+// 			fileProgress = downloader.GetPieceMgr().GetFileProgress()
+// 		}()
+
+// 		// Calculate file-based progress
+// 		var fileProgressPercent float64
+// 		var fileSummary string
+// 		if fileProgress != nil {
+// 			fileProgressPercent = fileProgress.GetOverallProgressPercent()
+// 			fileSummary = fileProgress.GetProgressSummary()
+// 		} else {
+// 			fileProgressPercent = 0.0
+// 			fileSummary = "N/A"
+// 		}
+
+// 		if pieceProgress >= 0 {
+// 			fmt.Printf("📊 Piece Progress: %.1f%% | File Progress: %.1f%% | Files: %s (iteration %d)\n",
+// 				pieceProgress, fileProgressPercent, fileSummary, iteration)
+// 		} else {
+// 			fmt.Printf("📊 Progress: ERROR | Files: %s (iteration %d)\n", fileSummary, iteration)
+// 		}
+
+// 		if iteration%3 == 0 {
+// 			fmt.Println("🔍 DIAGNOSTIC INFO:")
+// 			fmt.Printf("   - Total pieces needed: %d\n", len(t.Info.Pieces)/20)
+// 			fmt.Printf("   - Completed pieces: %d\n", downloader.GetPieceMgr().GetDownloaded())
+// 			fmt.Printf("   - Connected peers: %d\n", connectedPeers)
+
+// 			var isComplete bool
+// 			func() {
+// 				defer func() {
+// 					if r := recover(); r != nil {
+// 						fmt.Printf("❌ Panic checking completion: %v\n", r)
+// 						isComplete = false
+// 					}
+// 				}()
+// 				isComplete = downloader.IsComplete()
+// 			}()
+
+// 			fmt.Printf("   - Downloader complete: %v\n", isComplete)
+
+// 			if isComplete {
+// 				fmt.Printf("🎉 Download completed! Files saved to: %s\n", outputDir)
+// 				downloader.Stop()
+// 				return
+// 			}
+// 		}
+
+// 		if iteration > 100 {
+// 			fmt.Println("⏰ Stopping after 20 iterations for debugging")
+// 			downloader.Stop()
+// 			return
+// 		}
+// 	}()
+// }
+// }
 
 func formatBytes(bytes int64) string {
 	const unit = 1024

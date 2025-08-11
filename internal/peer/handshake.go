@@ -100,7 +100,7 @@ func DeserializeHandshake(data []byte) (*Handshake, error) {
 // PerformHandshake performs handshake with a peer
 func PerformHandshake(conn net.Conn, infoHash, peerID [20]byte) (*Handshake, error) {
 	// Set deadline for handshake
-	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 
 	// Send our handshake
