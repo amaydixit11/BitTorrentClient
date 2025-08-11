@@ -34,7 +34,9 @@ func NewDownloader(t *Torrent, outputDir string) *Downloader {
 		downloadDone: make(chan struct{}),
 	}
 }
-
+func (d *Downloader) GetPieceMgr() *piece.Manager {
+	return d.pieceManager
+}
 func GetPieceManager(t *Torrent, outputDir string) *piece.Manager {
 	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
 	for i := 0; i < len(pieceHashes); i++ {
@@ -150,57 +152,65 @@ func (d *Downloader) downloadLoop() {
 }
 
 // handlePeer handles a single peer connection
+// Replace this function in internal/torrent/download.go
 func (d *Downloader) handlePeer(conn *peer.Connection) {
 	defer d.RemovePeer(conn.ID)
+	fmt.Printf("Handling peer %x\n", conn.ID[:8])
 
-	fmt.Printf("Handling peer %x\n", conn.ID[:8]) // Add this debug line
-
-	// Send interested message if peer has pieces we need
 	if conn.IsUseful(d.pieceManager.GetCompletedPieces(), d.pieceManager.GetTotalPieces()) {
-		fmt.Printf("Peer %x is useful, sending interested\n", conn.ID[:8]) // Add this debug line
+		fmt.Printf("Peer %x is useful, sending interested\n", conn.ID[:8])
 		conn.SendInterested()
-	} else {
-		fmt.Printf("Peer %x is not useful\n", conn.ID[:8]) // Add this debug line
 	}
 
-	// Handle incoming piece data
+	// Use a for...range loop over the piece data channel.
+	// This loop will automatically terminate when conn.GetPieceData() is closed
+	// by the connection's Stop() method, preventing a goroutine leak.
 	for {
 		select {
-		case <-d.done:
-			return
+		case pieceData, ok := <-conn.GetPieceData():
+			if !ok {
+				// Channel has been closed, exit the goroutine.
+				fmt.Printf("Peer %x disconnected. Exiting handler.\n", conn.ID[:8])
+				return
+			}
 
-		case pieceData := <-conn.GetPieceData():
-			// Remove the request
 			d.requestMgr.RemoveRequest(conn.ID, pieceData.PieceIndex, pieceData.Begin)
 
-			// Handle the piece data
 			err := d.pieceManager.HandlePieceMessage(
 				int(pieceData.PieceIndex),
 				pieceData.Begin,
 				pieceData.Data,
 			)
 			if err != nil {
-				fmt.Printf("Error handling piece data: %v\n", err)
+				fmt.Printf("Error handling piece data from peer %x: %v\n", conn.ID[:8], err)
+				// Optionally, you could disconnect from a peer that sends bad data.
 				continue
 			}
 
-			// Check if we need to request more blocks from this piece
+			// After handling a piece, try to request more blocks.
 			d.requestMoreBlocks(conn, int(pieceData.PieceIndex))
+
+		case <-d.done:
+			// The entire downloader is shutting down.
+			fmt.Printf("Downloader shutting down. Exiting handler for peer %x.\n", conn.ID[:8])
+			return
 		}
 	}
 }
 
-// makeRequests tries to make new piece requests
+// Replace the existing makeRequests function in internal/torrent/download.go
+
 func (d *Downloader) makeRequests() {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	for _, conn := range d.connections {
-		if conn.Choked || !d.requestMgr.CanRequestFromPeer(conn.ID) {
-			continue
+		// A peer must be connected, not choking us, and have capacity for more requests.
+		if !conn.IsConnected() || conn.Choked || !d.requestMgr.CanRequestFromPeer(conn.ID) {
+			continue // Skip this peer if it's not ready
 		}
 
-		// Find a piece to request
+		// Select a piece that the peer has, which we need, and is not already pending.
 		piece := d.selector.SelectPiece(
 			d.pieceManager,
 			conn.Bitfield,
@@ -208,6 +218,12 @@ func (d *Downloader) makeRequests() {
 		)
 
 		if piece != nil {
+			// *** THIS IS THE CRITICAL FIX ***
+			// Mark the piece as pending so we don't select it again for another peer.
+			d.pieceManager.MarkPieceAsPending(piece)
+
+			// This log is helpful to see which piece is being worked on
+			fmt.Printf("INFO: Requesting piece %d from peer %x\n", piece.Index, conn.ID[:8])
 			d.requestBlocksFromPiece(conn, piece)
 		}
 	}

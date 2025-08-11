@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -133,12 +134,13 @@ func (c *Connection) IsConnected() bool {
 	return c.connected && !c.stopped
 }
 
-// Start starts the connection message loop
-func (c *Connection) Start() {
-	go c.messageLoop()
-}
+// // Start starts the connection message loop
+// func (c *Connection) Start() {
+// 	go c.messageLoop()
+// }
 
 // Stop stops the connection - thread-safe, can be called multiple times
+// Replace this function in internal/peer/connection.go
 func (c *Connection) Stop() {
 	c.stopOnce.Do(func() {
 		c.mu.Lock()
@@ -146,10 +148,12 @@ func (c *Connection) Stop() {
 		c.connected = false
 		c.mu.Unlock()
 
-		// Close the done channel only once
 		close(c.done)
 
-		// Close the connection
+		// CRITICAL FIX: Close the pieceQueue channel to signal downstream listeners
+		// that no more data will be sent.
+		close(c.pieceQueue)
+
 		if c.Conn != nil {
 			c.Conn.Close()
 		}
@@ -192,79 +196,79 @@ func (c *Connection) GetPieceData() <-chan *PieceData {
 	return c.pieceQueue
 }
 
-// messageLoop handles incoming and outgoing messages
-func (c *Connection) messageLoop() {
-	// Remove the defer c.Stop() to prevent double-closing
-	defer func() {
-		// Only stop if not already stopped
-		if !c.IsStopped() {
-			c.Stop()
-		}
-	}()
+// // messageLoop handles incoming and outgoing messages
+// func (c *Connection) messageLoop() {
+// 	// Remove the defer c.Stop() to prevent double-closing
+// 	defer func() {
+// 		// Only stop if not already stopped
+// 		if !c.IsStopped() {
+// 			c.Stop()
+// 		}
+// 	}()
 
-	// Set up ticker for keep-alive messages
-	keepAliveTicker := time.NewTicker(2 * time.Minute)
-	defer keepAliveTicker.Stop()
+// 	// Set up ticker for keep-alive messages
+// 	keepAliveTicker := time.NewTicker(2 * time.Minute)
+// 	defer keepAliveTicker.Stop()
 
-	for {
-		select {
-		case <-c.done:
-			return
+// 	for {
+// 		select {
+// 		case <-c.done:
+// 			return
 
-		case req := <-c.requestQueue:
-			if c.IsStopped() {
-				return
-			}
+// 		case req := <-c.requestQueue:
+// 			if c.IsStopped() {
+// 				return
+// 			}
 
-			// Send request message
-			err := c.SendMessage(NewRequestMessage(
-				uint32(req.PieceIndex),
-				uint32(req.Begin),
-				uint32(req.Length),
-			))
-			if err != nil {
-				fmt.Printf("Failed to send request: %v\n", err)
-				return
-			}
+// 			// Send request message
+// 			err := c.SendMessage(NewRequestMessage(
+// 				uint32(req.PieceIndex),
+// 				uint32(req.Begin),
+// 				uint32(req.Length),
+// 			))
+// 			if err != nil {
+// 				fmt.Printf("Failed to send request: %v\n", err)
+// 				return
+// 			}
 
-		case <-keepAliveTicker.C:
-			if c.IsStopped() {
-				return
-			}
+// 		case <-keepAliveTicker.C:
+// 			if c.IsStopped() {
+// 				return
+// 			}
 
-			// Send keep-alive
-			err := c.SendKeepAlive()
-			if err != nil {
-				fmt.Printf("Failed to send keep-alive: %v\n", err)
-				return
-			}
+// 			// Send keep-alive
+// 			err := c.SendKeepAlive()
+// 			if err != nil {
+// 				fmt.Printf("Failed to send keep-alive: %v\n", err)
+// 				return
+// 			}
 
-		default:
-			if c.IsStopped() {
-				return
-			}
+// 		default:
+// 			if c.IsStopped() {
+// 				return
+// 			}
 
-			// Read incoming messages
-			c.Conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-			msg, err := c.ReadMessage()
-			if err != nil {
-				// Check if it's a timeout
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				fmt.Printf("Failed to read message: %v\n", err)
-				return
-			}
+// 			// Read incoming messages
+// 			c.Conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+// 			msg, err := c.ReadMessage()
+// 			if err != nil {
+// 				// Check if it's a timeout
+// 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+// 					continue
+// 				}
+// 				fmt.Printf("Failed to read message: %v\n", err)
+// 				return
+// 			}
 
-			// Handle message
-			err = c.handleMessage(msg)
-			if err != nil {
-				fmt.Printf("Failed to handle message: %v\n", err)
-				return
-			}
-		}
-	}
-}
+// 			// Handle message
+// 			err = c.handleMessage(msg)
+// 			if err != nil {
+// 				fmt.Printf("Failed to handle message: %v\n", err)
+// 				return
+// 			}
+// 		}
+// 	}
+// }
 
 // handleMessage processes incoming messages
 func (c *Connection) handleMessage(msg *Message) error {
@@ -469,4 +473,98 @@ func (c *Connection) IsUseful(completedPieces map[int]bool, totalPieces int) boo
 		}
 	}
 	return false
+}
+
+// Add this helper struct at the top of the file
+type readResult struct {
+	msg *Message
+	err error
+}
+
+// Replace the existing Start function with this one
+func (c *Connection) Start() {
+	// We'll use two goroutines: one for reading, one for the main logic.
+	msgChan := make(chan readResult)
+	go c.readLoop(msgChan)
+	go c.messageLoop(msgChan)
+}
+
+// Add this new function to the file
+// readLoop handles blocking reads from the peer connection and sends results on a channel.
+func (c *Connection) readLoop(msgChan chan<- readResult) {
+	for {
+		// This is now a blocking read with no aggressive timeout.
+		// It will wait as long as needed for a full message to arrive.
+		msg, err := c.ReadMessage()
+
+		// Send the result back to the main loop.
+		select {
+		case msgChan <- readResult{msg, err}:
+			// If there was an error, we can't read anymore, so stop this goroutine.
+			if err != nil {
+				return
+			}
+		case <-c.done:
+			// The connection is stopping, so exit the goroutine.
+			return
+		}
+	}
+}
+
+// Replace the existing messageLoop function with this one
+func (c *Connection) messageLoop(msgChan <-chan readResult) {
+	defer func() {
+		if !c.IsStopped() {
+			c.Stop()
+		}
+	}()
+
+	keepAliveTicker := time.NewTicker(2 * time.Minute)
+	defer keepAliveTicker.Stop()
+
+	for {
+		select {
+		case <-c.done:
+			return
+
+		case result := <-msgChan: // Wait for a message from the readLoop
+			if result.err != nil {
+				// A read error means the connection is dead.
+				// io.EOF is a normal disconnect, no need to print an error for it.
+				if result.err != io.EOF {
+					fmt.Printf("ERROR: Corrupt message from peer %x: %v\n", c.ID[:8], result.err)
+				}
+				return // Stop this connection's logic loop.
+			}
+
+			// We got a message, so handle it.
+			if err := c.handleMessage(result.msg); err != nil {
+				fmt.Printf("ERROR: Failed to handle message from peer %x: %v\n", c.ID[:8], err)
+				return // Stop if handling fails.
+			}
+
+		case req := <-c.requestQueue:
+			if c.IsStopped() {
+				return
+			}
+			err := c.SendMessage(NewRequestMessage(
+				uint32(req.PieceIndex),
+				uint32(req.Begin),
+				uint32(req.Length),
+			))
+			if err != nil {
+				fmt.Printf("ERROR: Failed to send request to peer %x: %v\n", c.ID[:8], err)
+				return
+			}
+
+		case <-keepAliveTicker.C:
+			if c.IsStopped() {
+				return
+			}
+			if err := c.SendKeepAlive(); err != nil {
+				fmt.Printf("ERROR: Failed to send keep-alive to peer %x: %v\n", c.ID[:8], err)
+				return
+			}
+		}
+	}
 }

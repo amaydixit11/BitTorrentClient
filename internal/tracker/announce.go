@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 // urlEncodeBytes properly URL encodes binary data for tracker requests
@@ -31,59 +30,39 @@ func urlEncodeBytes(data []byte) string {
 	return string(encoded)
 }
 
-// buildTrackerURL constructs the tracker request URL with parameters
+// DELETE the urlEncodeBytes function.
+
+// Replace this function in internal/tracker/announce.go
 func (tc *TrackerClient) buildTrackerURL(announceURL string, req *TrackerRequest) (string, error) {
 	u, err := url.Parse(announceURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid announce URL: %v", err)
 	}
 
-	// Build query string manually to avoid double encoding
-	var parts []string
+	// Use url.Values for safe and idiomatic query parameter construction.
+	q := u.Query()
+	q.Set("info_hash", string(req.InfoHash)) // QueryEscape will handle the binary data correctly
+	q.Set("peer_id", string(req.PeerID))
+	q.Set("port", strconv.Itoa(req.Port))
+	q.Set("uploaded", strconv.FormatInt(req.Uploaded, 10))
+	q.Set("downloaded", strconv.FormatInt(req.Downloaded, 10))
+	q.Set("left", strconv.FormatInt(req.Left, 10))
 
-	// Required parameters
-	parts = append(parts, "info_hash="+urlEncodeBytes(req.InfoHash))
-	parts = append(parts, "peer_id="+urlEncodeBytes(req.PeerID))
-	parts = append(parts, "port="+strconv.Itoa(req.Port))
-	parts = append(parts, "uploaded="+strconv.FormatInt(req.Uploaded, 10))
-	parts = append(parts, "downloaded="+strconv.FormatInt(req.Downloaded, 10))
-	parts = append(parts, "left="+strconv.FormatInt(req.Left, 10))
-
-	// Optional parameters
 	if req.Compact {
-		parts = append(parts, "compact=1")
+		q.Set("compact", "1")
 	}
-
-	if req.NoPeerID {
-		parts = append(parts, "no_peer_id=1")
-	}
-
 	if req.Event != "" {
-		parts = append(parts, "event="+url.QueryEscape(req.Event))
+		q.Set("event", req.Event)
 	}
-
-	if req.IP != "" {
-		parts = append(parts, "ip="+url.QueryEscape(req.IP))
-	}
-
 	if req.NumWant > 0 {
-		parts = append(parts, "numwant="+strconv.Itoa(req.NumWant))
+		q.Set("numwant", strconv.Itoa(req.NumWant))
 	}
-
-	if req.Key != "" {
-		parts = append(parts, "key="+url.QueryEscape(req.Key))
-	}
-
 	if req.TrackerID != "" {
-		parts = append(parts, "trackerid="+url.QueryEscape(req.TrackerID))
+		q.Set("trackerid", req.TrackerID)
 	}
 
-	queryString := strings.Join(parts, "&")
-
-	if u.RawQuery != "" {
-		return u.String() + "&" + queryString, nil
-	}
-	return u.String() + "?" + queryString, nil
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // Announce sends an announce request to the tracker

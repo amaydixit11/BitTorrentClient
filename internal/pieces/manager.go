@@ -213,53 +213,51 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Remove the request
 	key := fmt.Sprintf("%d:%d", pieceIndex, begin)
 	delete(m.requests, key)
 
-	// Get the piece
 	if pieceIndex >= len(m.pieces) {
 		return fmt.Errorf("invalid piece index: %d", pieceIndex)
 	}
-
 	piece := m.pieces[pieceIndex]
 
-	// Set the block data
+	// Don't process blocks for already completed pieces
+	if piece.IsComplete() {
+		return nil
+	}
+
 	err := piece.SetBlock(begin, data)
 	if err != nil {
 		return fmt.Errorf("failed to set block: %w", err)
 	}
 
-	// Check if piece is complete
+	// Check if the piece is now fully downloaded (all blocks received)
 	if piece.IsComplete() {
-		fmt.Printf("Validating piece %d with blocks:\n", pieceIndex)
-		for i, received := range piece.Downloaded {
-			fmt.Printf("  Block %d: received=%v\n", i, received)
-		}
-		// Validate the piece
+		// Validate the piece hash
 		if piece.Validate() {
-			// Write piece to files - Add this block
+			fmt.Printf("✅ Piece %d validated successfully!\n", pieceIndex)
 			err := m.fileWriter.WritePiece(pieceIndex, piece.Data)
 			if err != nil {
-				fmt.Printf("Failed to write piece %d to file: %v\n", pieceIndex, err)
-				piece.Reset()
+				fmt.Printf("❌ Failed to write piece %d to file: %v\n", pieceIndex, err)
+				piece.Reset() // Reset piece to re-download
 				delete(m.pendingPieces, pieceIndex)
 				return fmt.Errorf("failed to write piece to file: %w", err)
 			}
 
+			// Mark as complete and update stats
 			m.completePieces[pieceIndex] = true
 			m.downloaded++
-			m.downloadedBytes += int64(piece.Length)
+			m.downloadedBytes += piece.Length
 			delete(m.pendingPieces, pieceIndex)
 
-			fmt.Printf("Piece %d completed and written to file! Progress: %d/%d (%.1f%%)\n",
+			fmt.Printf("Piece %d completed! Progress: %d/%d (%.1f%%)\n",
 				pieceIndex, m.downloaded, m.totalPieces, m.GetProgress())
 
-			// Save resume data periodically
 			if m.downloaded%10 == 0 {
 				m.saveResumeData()
 			}
 		} else {
+			// If validation fails, reset the piece so it can be downloaded again.
 			fmt.Printf("Piece %d failed validation, retrying...\n", pieceIndex)
 			piece.Reset()
 			m.cleanupPieceRequests(pieceIndex)
@@ -269,6 +267,12 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 
 	return nil
 }
+
+// Also, DELETE the following functions from this file as they are unused or misplaced:
+// - func (p *Piece) IsComplete()
+// - func (m *Manager) GetPieceToRequest(peerBitfield []byte)
+// - func (m *Manager) getRandomAvailablePiece(peerBitfield []byte)
+// - func (m *Manager) getRarestPiece(peerBitfield []byte)
 
 // GetTimeoutRequests returns requests that have timed out
 func (m *Manager) GetTimeoutRequests() []*Request {
@@ -379,4 +383,16 @@ func (p *Piece) IsComplete() bool {
 		}
 	}
 	return true
+}
+
+// Add this new function to internal/pieces/manager.go
+
+// MarkPieceAsPending adds a piece to the pending map in a thread-safe way.
+func (m *Manager) MarkPieceAsPending(piece *Piece) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Only mark as pending if it's not already complete
+	if _, exists := m.completePieces[piece.Index]; !exists {
+		m.pendingPieces[piece.Index] = piece
+	}
 }

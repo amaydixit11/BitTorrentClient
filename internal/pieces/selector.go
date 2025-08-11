@@ -51,7 +51,7 @@ func (ps *PieceSelector) selectRarestFirst(manager *Manager, peerBitfield []byte
 	pieceAvailability := make(map[int]int)
 	var availablePieces []int
 
-	// Count how many peers have each piece
+	// Count availability across all peers
 	for i := 0; i < manager.totalPieces; i++ {
 		if manager.isPieceAvailable(i, peerBitfield) {
 			availablePieces = append(availablePieces, i)
