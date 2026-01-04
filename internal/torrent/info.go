@@ -2,7 +2,6 @@ package torrent
 
 import (
 	"errors"
-	"fmt"
 )
 
 // Info represents the info dictionary of a torrent
@@ -27,48 +26,6 @@ func (i *Info) IsMultiFile() bool {
 	return len(i.Files) > 0
 }
 
-// TotalLength returns the total length of all files
-func (i *Info) TotalLength() int64 {
-	if i.IsSingleFile() {
-		return *i.Length
-	}
-
-	var total int64
-	for _, file := range i.Files {
-		total += file.Length
-	}
-	return total
-}
-
-// NumPieces returns the total number of pieces
-func (i *Info) NumPieces() int {
-	return len(i.Pieces)
-}
-
-// PieceHash returns the hash for a specific piece
-func (i *Info) PieceHash(index int) ([20]byte, error) {
-	if index < 0 || index >= len(i.Pieces) {
-		return [20]byte{}, fmt.Errorf("piece index %d out of range", index)
-	}
-	return i.Pieces[index], nil
-}
-
-// LastPieceLength returns the length of the last piece (often smaller)
-func (i *Info) LastPieceLength() int64 {
-	if len(i.Pieces) == 0 {
-		return 0
-	}
-
-	totalLength := i.TotalLength()
-	remainder := totalLength % i.PieceLength
-
-	if remainder == 0 {
-		return i.PieceLength
-	}
-	return remainder
-}
-
-// In info.go
 func (i *Info) Validate() error {
 	if i.Name == "" {
 		return errors.New("torrent name cannot be empty")

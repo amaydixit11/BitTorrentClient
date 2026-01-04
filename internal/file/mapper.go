@@ -2,7 +2,6 @@ package file
 
 import (
 	"fmt"
-	"path/filepath"
 )
 
 // FileRange represents a range of bytes within a file
@@ -147,41 +146,4 @@ func min(a, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-// CreateFileInfoFromTorrent creates FileInfo slice from torrent data
-func CreateFileInfoFromTorrent(torrentFiles []TorrentFile, isSingleFile bool, torrentName string) []FileInfo {
-	var files []FileInfo
-	currentOffset := int64(0)
-
-	if isSingleFile {
-		// Single file torrent
-		files = append(files, FileInfo{
-			Path:   torrentName,
-			Length: torrentFiles[0].Length,
-			Offset: 0,
-		})
-	} else {
-		// Multi-file torrent
-		for _, tFile := range torrentFiles {
-			// Build full path from torrent name and file path
-			fullPath := filepath.Join(torrentName, filepath.Join(tFile.Path...))
-
-			files = append(files, FileInfo{
-				Path:   fullPath,
-				Length: tFile.Length,
-				Offset: currentOffset,
-			})
-
-			currentOffset += tFile.Length
-		}
-	}
-
-	return files
-}
-
-// TorrentFile represents a file in the torrent metadata
-type TorrentFile struct {
-	Path   []string // Path components
-	Length int64    // File length
 }

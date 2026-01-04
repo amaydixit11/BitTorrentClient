@@ -28,8 +28,8 @@ func main() {
 	//	os.Exit(1)
 	//}
 
-	torrentFile := "small.torrent"
-	outputDir := "./downloads"
+	torrentFile := "debian.torrent"
+	outputDir := "./downloads/debian_1"
 	if len(os.Args) >= 3 {
 		outputDir = os.Args[2]
 	}
@@ -42,8 +42,8 @@ func main() {
 	fmt.Printf("✅ Torrent parsed successfully\n")
 	fmt.Printf("   📁 Name: %s\n", t.Info.Name)
 	fmt.Printf("   💾 Size: %s\n", formatBytes(t.Info.GetTotalLength()))
-	fmt.Printf("   🧩 Pieces: %d\n", len(t.Info.Pieces)/20)
-	fmt.Printf("   🔗 Announce URL: %s\n", t.Announce)
+	fmt.Printf("   🧩 Pieces: %d\n", len(t.Info.Pieces))
+	fmt.Printf("    Announce URL: %s\n", t.Announce)
 
 	fmt.Println("\n🔍 STEP 2: Creating output directory...")
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -89,51 +89,78 @@ func main() {
 	downloader.Start()
 	fmt.Printf("✅ Downloader created and started\n")
 
-	fmt.Println("\n🔍 STEP 6: Connecting to peers (ONE AT A TIME)...")
-	connectedPeers := 0
-	maxPeers := 10 // Increased from 3
+	fmt.Println("\n🔍 STEP 6: Connecting to peers (PARALLEL)...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased from 10s
-	defer cancel()
+	// Connection result channel
+	type connResult struct {
+		conn *peer.Connection
+		addr string
+		err  error
+	}
 
-	for i, p := range resp.Peers {
-		if connectedPeers >= maxPeers {
-			break
-		}
+	resultChan := make(chan connResult, len(resp.Peers))
+	maxPeers := 5   // Max peers we want to connect to
+	batchSize := 15 // Try 15 peers at once
+	timeout := 10 * time.Second
 
+	// Try peers in batches
+	peersToTry := resp.Peers
+	if len(peersToTry) > 50 {
+		peersToTry = peersToTry[:50]
+	}
+
+	fmt.Printf("   🚀 Attempting %d peers in parallel (timeout: %v)...\n", min(batchSize, len(peersToTry)), timeout)
+
+	// Launch parallel connection attempts
+	for i := 0; i < len(peersToTry) && i < batchSize; i++ {
+		p := peersToTry[i]
 		peerAddr := fmt.Sprintf("%s:%d", p.IP, p.Port)
-		fmt.Printf("   Attempting to connect to peer %d: %s\n", i+1, peerAddr)
 
-		conn, err := peer.ConnectToPeer(ctx, peerAddr, t.InfoHash, peerID)
-		if err != nil {
-			fmt.Printf("   ❌ Failed to connect to %s: %v\n", peerAddr, err)
-			continue
+		go func(addr string) {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+
+			conn, err := peer.ConnectToPeer(ctx, addr, t.InfoHash, peerID)
+			if err != nil {
+				resultChan <- connResult{nil, addr, err}
+				return
+			}
+
+			peerConn := peer.NewConnection(conn.Conn, t.InfoHash)
+			peerConn.ID = conn.ID
+			peerConn.Start()
+			resultChan <- connResult{peerConn, addr, nil}
+		}(peerAddr)
+	}
+
+	// Collect results with overall timeout
+	connectedPeers := 0
+	overallTimeout := time.After(timeout + 5*time.Second)
+	attemptsReceived := 0
+	totalAttempts := min(batchSize, len(peersToTry))
+
+	for connectedPeers < maxPeers && attemptsReceived < totalAttempts {
+		select {
+		case result := <-resultChan:
+			attemptsReceived++
+			if result.err != nil {
+				fmt.Printf("   ❌ %s: %v\n", result.addr, result.err)
+			} else {
+				fmt.Printf("   ✅ Connected to %s\n", result.addr)
+				downloader.AddPeer(result.conn)
+				connectedPeers++
+			}
+		case <-overallTimeout:
+			fmt.Println("   ⏰ Connection timeout reached")
+			goto doneConnecting
 		}
-
-		fmt.Printf("   ✅ Connected to %s\n", peerAddr)
-
-		peerConn := peer.NewConnection(conn.Conn, t.InfoHash)
-		peerConn.ID = conn.ID
-		peerConn.Start()
-
-		downloader.AddPeer(peerConn)
-		connectedPeers++
-
-		fmt.Printf("   📊 Added peer to downloader (total: %d)\n", connectedPeers)
-
-		time.Sleep(1 * time.Second)
 	}
 
+doneConnecting:
 	if connectedPeers == 0 {
-		log.Fatalf("❌ Could not connect to any peers")
+		log.Fatalf("❌ Could not connect to any peers. Try a different network or VPN.")
 	}
 
-	fmt.Printf("✅ Connected to %d peers successfully\n", connectedPeers)
-
-	fmt.Println("\n🔍 STEP 7: Starting download monitoring...")
-	fmt.Println("   📊 Progress will be shown every 5 seconds")
-	fmt.Println("   🛑 Press Ctrl+C to stop\n")
-	// Replace the section from "STEP 7" to the end of the main function.
 	fmt.Printf("✅ Connected to %d peers successfully\n", connectedPeers)
 
 	fmt.Println("\n🔍 STEP 7: Starting download monitoring...")
@@ -183,92 +210,6 @@ func main() {
 		}
 	}
 }
-
-// You will also need to add these imports to main.go:
-// import "os/signal"
-// import "syscall"
-// // Give peers a moment to exchange initial messages
-// time.Sleep(3 * time.Second)
-
-// // Simple progress monitoring loop with crash protection
-// iteration := 0
-// for {
-// 	func() {
-// 		defer func() {
-// 			if r := recover(); r != nil {
-// 				fmt.Printf("❌ Panic in monitoring loop: %v\n", r)
-// 			}
-// 		}()
-
-// 		time.Sleep(5 * time.Second)
-// 		iteration++
-
-// 		// Get both piece and file progress
-// 		var pieceProgress float64
-// 		var fileProgress *file.Progress
-// 		func() {
-// 			defer func() {
-// 				if r := recover(); r != nil {
-// 					fmt.Printf("❌ Panic getting progress: %v\n", r)
-// 					pieceProgress = -1
-// 				}
-// 			}()
-// 			pieceProgress = downloader.GetProgress()
-// 			fileProgress = downloader.GetPieceMgr().GetFileProgress()
-// 		}()
-
-// 		// Calculate file-based progress
-// 		var fileProgressPercent float64
-// 		var fileSummary string
-// 		if fileProgress != nil {
-// 			fileProgressPercent = fileProgress.GetOverallProgressPercent()
-// 			fileSummary = fileProgress.GetProgressSummary()
-// 		} else {
-// 			fileProgressPercent = 0.0
-// 			fileSummary = "N/A"
-// 		}
-
-// 		if pieceProgress >= 0 {
-// 			fmt.Printf("📊 Piece Progress: %.1f%% | File Progress: %.1f%% | Files: %s (iteration %d)\n",
-// 				pieceProgress, fileProgressPercent, fileSummary, iteration)
-// 		} else {
-// 			fmt.Printf("📊 Progress: ERROR | Files: %s (iteration %d)\n", fileSummary, iteration)
-// 		}
-
-// 		if iteration%3 == 0 {
-// 			fmt.Println("🔍 DIAGNOSTIC INFO:")
-// 			fmt.Printf("   - Total pieces needed: %d\n", len(t.Info.Pieces)/20)
-// 			fmt.Printf("   - Completed pieces: %d\n", downloader.GetPieceMgr().GetDownloaded())
-// 			fmt.Printf("   - Connected peers: %d\n", connectedPeers)
-
-// 			var isComplete bool
-// 			func() {
-// 				defer func() {
-// 					if r := recover(); r != nil {
-// 						fmt.Printf("❌ Panic checking completion: %v\n", r)
-// 						isComplete = false
-// 					}
-// 				}()
-// 				isComplete = downloader.IsComplete()
-// 			}()
-
-// 			fmt.Printf("   - Downloader complete: %v\n", isComplete)
-
-// 			if isComplete {
-// 				fmt.Printf("🎉 Download completed! Files saved to: %s\n", outputDir)
-// 				downloader.Stop()
-// 				return
-// 			}
-// 		}
-
-// 		if iteration > 100 {
-// 			fmt.Println("⏰ Stopping after 20 iterations for debugging")
-// 			downloader.Stop()
-// 			return
-// 		}
-// 	}()
-// }
-// }
 
 func formatBytes(bytes int64) string {
 	const unit = 1024

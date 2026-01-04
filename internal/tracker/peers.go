@@ -87,31 +87,3 @@ func (tc *TrackerClient) parseDictPeers(data []interface{}) ([]Peer, error) {
 
 	return peers, nil
 }
-
-// GetPeers is a convenience method for getting peers for a torrent
-
-func (tc *TrackerClient) GetPeers(announceURL string, infoHash []byte, left int64) ([]Peer, error) {
-
-	req := &TrackerRequest{
-		InfoHash:   infoHash,
-		PeerID:     tc.peerID,
-		Port:       tc.port,
-		Uploaded:   0,
-		Downloaded: 0,
-		Left:       left,
-		Compact:    true,
-		Event:      "started",
-		NumWant:    50,
-	}
-
-	resp, err := tc.Announce(announceURL, req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.FailureReason != "" {
-		return nil, fmt.Errorf("tracker error: %s", resp.FailureReason)
-	}
-
-	return resp.Peers, nil
-}

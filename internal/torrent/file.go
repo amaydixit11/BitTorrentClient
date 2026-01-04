@@ -3,7 +3,6 @@ package torrent
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -12,11 +11,6 @@ type File struct {
 	Length int64    `bencode:"length"`
 	Path   []string `bencode:"path"`
 	MD5Sum *string  `bencode:"md5sum,omitempty"`
-}
-
-// DisplayPath returns the file path as a string
-func (f *File) DisplayPath() string {
-	return strings.Join(f.Path, string(os.PathSeparator))
 }
 
 // ValidatePath checks if the file path is safe and valid
@@ -39,9 +33,4 @@ func (f *File) ValidatePath() error {
 	}
 
 	return nil
-}
-
-// IsEmpty returns true if this is a zero-length file
-func (f *File) IsEmpty() bool {
-	return f.Length == 0
 }

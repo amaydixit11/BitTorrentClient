@@ -119,15 +119,6 @@ func NewBitfieldMessage(bitfield []byte) *Message {
 	return NewMessage(MsgBitfield, bitfield)
 }
 
-// NewCancelMessage creates a cancel message
-func NewCancelMessage(index, begin, length uint32) *Message {
-	payload := make([]byte, 12)
-	binary.BigEndian.PutUint32(payload[0:4], index)
-	binary.BigEndian.PutUint32(payload[4:8], begin)
-	binary.BigEndian.PutUint32(payload[8:12], length)
-	return NewMessage(MsgCancel, payload)
-}
-
 func NewRequestMessage(index, begin, length uint32) *Message {
 	payload := make([]byte, 12)
 	binary.BigEndian.PutUint32(payload[0:4], index)
@@ -188,17 +179,4 @@ func ParsePortMessage(payload []byte) uint16 {
 		return 0
 	}
 	return uint16(payload[0])<<8 | uint16(payload[1])
-}
-
-// NewPieceMessage creates a piece message
-func NewPieceMessage(index, begin uint32, data []byte) *Message {
-	payload := make([]byte, 8+len(data))
-	binary.BigEndian.PutUint32(payload[0:4], index)
-	binary.BigEndian.PutUint32(payload[4:8], begin)
-	copy(payload[8:], data)
-
-	return &Message{
-		ID:      MsgPiece,
-		Payload: payload,
-	}
 }
