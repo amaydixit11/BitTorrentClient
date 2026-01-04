@@ -268,12 +268,6 @@ func (m *Manager) HandlePieceMessage(pieceIndex int, begin int64, data []byte) e
 	return nil
 }
 
-// Also, DELETE the following functions from this file as they are unused or misplaced:
-// - func (p *Piece) IsComplete()
-// - func (m *Manager) GetPieceToRequest(peerBitfield []byte)
-// - func (m *Manager) getRandomAvailablePiece(peerBitfield []byte)
-// - func (m *Manager) getRarestPiece(peerBitfield []byte)
-
 // GetTimeoutRequests returns requests that have timed out
 func (m *Manager) GetTimeoutRequests() []*Request {
 	m.mu.RLock()

@@ -38,10 +38,8 @@ func (d *Downloader) GetPieceMgr() *piece.Manager {
 	return d.pieceManager
 }
 func GetPieceManager(t *Torrent, outputDir string) *piece.Manager {
-	pieceHashes := make([][20]byte, len(t.Info.Pieces)/20)
-	for i := 0; i < len(pieceHashes); i++ {
-		pieceHashes[i] = t.Info.Pieces[i]
-	}
+	// t.Info.Pieces is already [][20]byte, so use it directly
+	pieceHashes := t.Info.Pieces
 
 	// Create file info from torrent
 	fileInfos := createFileInfoFromTorrent(t)

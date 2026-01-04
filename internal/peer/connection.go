@@ -134,11 +134,6 @@ func (c *Connection) IsConnected() bool {
 	return c.connected && !c.stopped
 }
 
-// // Start starts the connection message loop
-// func (c *Connection) Start() {
-// 	go c.messageLoop()
-// }
-
 // Stop stops the connection - thread-safe, can be called multiple times
 // Replace this function in internal/peer/connection.go
 func (c *Connection) Stop() {
@@ -195,80 +190,6 @@ func (c *Connection) RequestPiece(pieceIndex, begin int64, length int64) error {
 func (c *Connection) GetPieceData() <-chan *PieceData {
 	return c.pieceQueue
 }
-
-// // messageLoop handles incoming and outgoing messages
-// func (c *Connection) messageLoop() {
-// 	// Remove the defer c.Stop() to prevent double-closing
-// 	defer func() {
-// 		// Only stop if not already stopped
-// 		if !c.IsStopped() {
-// 			c.Stop()
-// 		}
-// 	}()
-
-// 	// Set up ticker for keep-alive messages
-// 	keepAliveTicker := time.NewTicker(2 * time.Minute)
-// 	defer keepAliveTicker.Stop()
-
-// 	for {
-// 		select {
-// 		case <-c.done:
-// 			return
-
-// 		case req := <-c.requestQueue:
-// 			if c.IsStopped() {
-// 				return
-// 			}
-
-// 			// Send request message
-// 			err := c.SendMessage(NewRequestMessage(
-// 				uint32(req.PieceIndex),
-// 				uint32(req.Begin),
-// 				uint32(req.Length),
-// 			))
-// 			if err != nil {
-// 				fmt.Printf("Failed to send request: %v\n", err)
-// 				return
-// 			}
-
-// 		case <-keepAliveTicker.C:
-// 			if c.IsStopped() {
-// 				return
-// 			}
-
-// 			// Send keep-alive
-// 			err := c.SendKeepAlive()
-// 			if err != nil {
-// 				fmt.Printf("Failed to send keep-alive: %v\n", err)
-// 				return
-// 			}
-
-// 		default:
-// 			if c.IsStopped() {
-// 				return
-// 			}
-
-// 			// Read incoming messages
-// 			c.Conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-// 			msg, err := c.ReadMessage()
-// 			if err != nil {
-// 				// Check if it's a timeout
-// 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-// 					continue
-// 				}
-// 				fmt.Printf("Failed to read message: %v\n", err)
-// 				return
-// 			}
-
-// 			// Handle message
-// 			err = c.handleMessage(msg)
-// 			if err != nil {
-// 				fmt.Printf("Failed to handle message: %v\n", err)
-// 				return
-// 			}
-// 		}
-// 	}
-// }
 
 // handleMessage processes incoming messages
 func (c *Connection) handleMessage(msg *Message) error {

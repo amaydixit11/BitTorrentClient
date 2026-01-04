@@ -28,8 +28,3 @@ func (t *Torrent) Validate() error {
 
 	return t.Info.Validate()
 }
-
-// // NewDownloader creates a new downloader for this torrent
-// func (t *Torrent) NewDownloader() *Downloader {
-// 	return NewDownloader(t)
-// }

@@ -9,30 +9,6 @@ import (
 	"strconv"
 )
 
-// urlEncodeBytes properly URL encodes binary data for tracker requests
-func urlEncodeBytes(data []byte) string {
-	encoded := make([]byte, 0, len(data)*3)
-
-	for _, b := range data {
-		// Check if byte needs encoding
-		if (b >= '0' && b <= '9') ||
-			(b >= 'A' && b <= 'Z') ||
-			(b >= 'a' && b <= 'z') ||
-			b == '.' || b == '-' || b == '_' || b == '~' {
-			encoded = append(encoded, b)
-		} else {
-			encoded = append(encoded, '%')
-			encoded = append(encoded, "0123456789ABCDEF"[b>>4])
-			encoded = append(encoded, "0123456789ABCDEF"[b&15])
-		}
-	}
-
-	return string(encoded)
-}
-
-// DELETE the urlEncodeBytes function.
-
-// Replace this function in internal/tracker/announce.go
 func (tc *TrackerClient) buildTrackerURL(announceURL string, req *TrackerRequest) (string, error) {
 	u, err := url.Parse(announceURL)
 	if err != nil {
