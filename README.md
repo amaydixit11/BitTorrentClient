@@ -1,6 +1,13 @@
 # BitTorrent Client
 
+[![CI](https://github.com/amaydixit11/BitTorrentClient/actions/workflows/ci.yml/badge.svg)](https://github.com/amaydixit11/BitTorrentClient/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](https://go.dev)
+
 A fully functional BitTorrent client written from scratch in Go.
+
+Every push runs `gofmt`, `go build`, `go vet` and `go test -race` across the protocol
+packages — bencode round-tripping, the 68-byte handshake, wire-message framing,
+BEP-23 compact peer parsing, and info-hash derivation are all covered by tests.
 
 ## Features
 

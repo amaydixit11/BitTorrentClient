@@ -165,7 +165,7 @@ doneConnecting:
 
 	fmt.Println("\n🔍 STEP 7: Starting download monitoring...")
 	fmt.Println("   📊 Progress will be shown every 5 seconds")
-	fmt.Println("   🛑 Press Ctrl+C to stop\n")
+	fmt.Print("   🛑 Press Ctrl+C to stop\n\n")
 
 	// Create a channel to listen for OS signals (like Ctrl+C)
 	signals := make(chan os.Signal, 1)
